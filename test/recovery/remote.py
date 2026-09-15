@@ -28,12 +28,19 @@ REQUIRED = {
     "TestBackupCrashAndSeedRecovery",
     "TestBackupResponseBoundaries", "TestBackupRedirectDoesNotForwardAuthorization",
     "TestBackupStalledResponseHonorsCancellation",
+    "TestProtectedAttemptPersistenceAndTampering", "TestProtectedAttemptClaimAndStorageFailure",
+    "TestRetainedOutboxAssociationAuthenticatesBeforeScheduling",
+    "TestProtectedAttemptCumulativeByteLimit", "TestProtectedAttemptCancellationAfterAcquire",
 }
 GATES = {
     "TestRecoveryGateOrdersAndBindsCandidate", "TestRecoveryGateRejectsFailuresBeforeSubmission",
     "TestRecoveryGateMissingConnectors", "TestRecoverySubmissionLostResponse",
     "TestRecoveryGateBatchFailureRevokesReadiness", "TestRecoveryDisabledCompletion",
     "TestRecoveryNetworkBoundary",
+    "TestProtectedAttemptCrashProcess", "TestProtectedRecoveryLegacyAndUnavailableStorage",
+    "TestProtectedGatePersistenceFailurePreventsSubmission", "TestProtectedActiveRetryDoesNotQuarantineRunningAttempt",
+    "TestProtectedRegistrationNetworkGate", "TestProtectedStreamTerminationPreservesUncertainty",
+    "TestProtectedFinalizedEvidenceSurvivesLaterStreamEvents",
 }
 
 
@@ -133,7 +140,7 @@ def main() -> int:
             if not actual or actual[0] != expected:
                 raise RuntimeError(name + " differs from the local build")
         for name, binary, expected in (("recovery", "recovery-tests", REQUIRED), ("gates", "application-tests", GATES)):
-            pattern = "." if name == "recovery" else "^TestRecovery"
+            pattern = "." if name == "recovery" else "^Test(Recovery|Protected|Retained)"
             env = f"env -i PATH=/usr/bin:/bin HOME={remote} TMPDIR={remote} BACKUP_PROTOTYPE_BIN={remote}/arkade-recovery-prototype"
             command = f"chmod 700 {remote}/* && {env} timeout --kill-after=5 180 {remote}/{binary} -test.v -test.count={args.repeat} -test.timeout=170s -test.run={shlex.quote(pattern)}"
             output = execute(name, ssh + [command], timeout=200)

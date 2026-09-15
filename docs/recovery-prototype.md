@@ -29,6 +29,73 @@ this binding was introduced fail closed on retry and remain untouched for
 reconciliation. Already uploaded records can still be fetched and decrypted;
 the delegate cannot safely authenticate their plaintext association retroactively
 because it does not retain the ephemeral encryption key.
+New local outboxes also retain their intent/batch association. Restart scans
+verify that association against the filename and existing binding signature,
+then verify the historical grant, encrypted event, publisher, origin and byte
+count before using a grant ID. Older outboxes lacking the association block new
+protected scheduling until reviewed; an authenticated payload alone cannot tell
+which hashed filename it belongs to. An exact retry supplied with the original
+intent, batch and plaintext can populate these local fields only after verifying
+the existing binding. It does not change the saved signed network payload.
+
+## Protected attempt restarts
+
+The same publisher-owned directory also retains `attempt-*.json`. These local
+records are publisher-signed and fsynced together with their directory. They bind
+the exact commitment PSBT/txid, batch, sorted task IDs and acknowledged ciphertext
+hashes. This adds no network message, changes no signed wire bytes and does not
+introduce a second task queue.
+
+| Durable observation | Restart behavior |
+|---|---|
+| Preparing, before upload or while an upload reply is uncertain | Quarantine; preserve candidate and any encrypted outboxes |
+| All backup hashes acknowledged | Quarantine; no automatic new round or submission |
+| Submission unknown, saved before the forfeit call | Quarantine; never replay that call |
+| Submit call returned success, no final event saved | Quarantine; success alone is not batch completion |
+| Exact matching final event saved, task DB update interrupted | Replay only the idempotent task completion update |
+
+An old pending task with a matching outbox but no attempt record is quarantined
+too: older versions did not persist submission uncertainty. Corrupt attempt
+storage or a missing recovery manager prevents protected scheduling. New intents
+and `allowReplace` cannot reuse inputs covered by retained attempts or quarantine.
+Generic spent-input notifications cannot cancel those attempts and erase the
+uncertainty. An exact request retried while a batch is running is rejected without
+changing that batch's durable state.
+
+Quarantined tasks appear in the existing failed-task API/UI with a reason prefixed
+`protected recovery quarantined:`. For verified attempt records the reason includes
+phase, batch and commitment IDs, never PSBTs, user keys or decrypted bundles. To
+investigate, stop automatic enrollment for the affected inputs, preserve the task
+database and entire recovery directory, and compare the retained exact candidate,
+receipt hashes and submitted/finalized observations with independently sufficient
+Ark/Bitcoin evidence. Do not delete the marker, reset the task to pending, or submit
+the old forfeits as a troubleshooting step. A missing transaction, an unspent
+ancestor, an upload receipt or a spent notification alone does not establish a
+completed refresh. There is intentionally no automatic release from quarantine.
+
+Later failure or mismatching events cannot quarantine an already recorded final
+event, even when its task DB update failed. Stream termination before such a final
+event quarantines the last observed phase immediately.
+
+Only a matching final event already durably observed is automatically reconciled;
+this is not general reconstruction of an unknown outcome from Ark or Bitcoin.
+Attempt records have bounded input sizes, a 10,000-record inspection limit,
+32 MiB of cumulative serialized data and 10,000 total task references. New writes
+respect these limits, and scans check cancellation between files and task IDs.
+They and old outboxes are retained, including completed attempts. Throughput at
+that retention limit has not been established. Restoring an older snapshot that
+omits both attempt and outbox evidence, losing the publisher directory, or losing
+the host is outside the process-restart guarantee: preserve these files and the
+task database as one recovery set. Do not independently roll them back.
+
+The targeted restart test kills a child process without closing SQLite/Badger or
+the publisher manager at seven boundaries, then reopens both from disk. Its HTTP
+ACK fixture and forfeit callback test local ordering and non-replay, not Bitcoin
+settlement or backup-host durability. Run:
+
+```sh
+go test -race ./pkg/recovery ./internal/core/application -run 'Test(Protected|RetainedOutbox|RecoveryGate|RecoverySubmission|RecoveryDisabled|RecoveryNetwork)' -count=1 -timeout=240s
+```
 
 `go build ./cmd/recovery-client` builds the helper for generating test identities,
 signing registrations, and fetching/decrypting records with an existing Nostr key.

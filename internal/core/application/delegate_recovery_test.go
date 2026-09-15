@@ -49,9 +49,12 @@ type gateRepos struct {
 }
 
 func (r gateRepos) Delegate() domain.DelegateRepository { return r.repo }
-func gateHandler() (*delegateBatchSessionHandler, *gateRepository) {
+func gateHandler(t *testing.T) (*delegateBatchSessionHandler, *gateRepository) {
 	r := &gateRepository{}
-	return &delegateBatchSessionHandler{delegate: &DelegateService{svc: &Service{dbSvc: gateRepos{repo: r}}, recovery: &recovery.Manager{}, registeredIntents: map[string]registeredIntent{}}, selectedTasks: []registeredIntent{{taskID: "task"}}}, r
+	m, err := recovery.NewManager(t.TempDir(), "http://127.0.0.1:9081")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m.Close()) })
+	return &delegateBatchSessionHandler{delegate: &DelegateService{svc: &Service{dbSvc: gateRepos{repo: r}}, recovery: m, registeredIntents: map[string]registeredIntent{}}, selectedTasks: []registeredIntent{{taskID: "task"}}}, r
 }
 func gateEvent(t *testing.T) client.BatchFinalizationEvent {
 	tx := wire.NewMsgTx(2)
@@ -68,7 +71,7 @@ func gateReceipt() (map[string]string, error) {
 }
 
 func TestRecoveryGateOrdersAndBindsCandidate(t *testing.T) {
-	h, r := gateHandler()
+	h, r := gateHandler(t)
 	event := gateEvent(t)
 	order := []string{}
 	backup := func() (map[string]string, error) { order = append(order, "ack"); return gateReceipt() }
@@ -85,7 +88,7 @@ func TestRecoveryGateOrdersAndBindsCandidate(t *testing.T) {
 func TestRecoveryGateRejectsFailuresBeforeSubmission(t *testing.T) {
 	for _, mode := range []string{"timeout", "missing receipt", "changed candidate", "changed tasks", "task update failure"} {
 		t.Run(mode, func(t *testing.T) {
-			h, r := gateHandler()
+			h, r := gateHandler(t)
 			e := gateEvent(t)
 			calls := 0
 			backup := gateReceipt
@@ -114,13 +117,13 @@ func TestRecoveryGateRejectsFailuresBeforeSubmission(t *testing.T) {
 	}
 }
 func TestRecoveryGateMissingConnectors(t *testing.T) {
-	h, r := gateHandler()
+	h, r := gateHandler(t)
 	require.Error(t, h.OnBatchFinalization(context.Background(), gateEvent(t), nil, nil))
 	require.Equal(t, 1, r.failed)
 	require.Equal(t, recoveryFailed, h.recoveryAttempt.phase)
 }
 func TestRecoverySubmissionLostResponse(t *testing.T) {
-	h, r := gateHandler()
+	h, r := gateHandler(t)
 	e := gateEvent(t)
 	calls := 0
 	submit := func() error { calls++; return errors.New("response lost") }
@@ -138,7 +141,7 @@ func TestRecoverySubmissionLostResponse(t *testing.T) {
 	require.Equal(t, 2, r.completed)
 }
 func TestRecoveryGateBatchFailureRevokesReadiness(t *testing.T) {
-	h, r := gateHandler()
+	h, r := gateHandler(t)
 	e := gateEvent(t)
 	require.NoError(t, h.finalizeRecovery(context.Background(), e, gateReceipt, func() error { return nil }))
 	require.Error(t, h.OnBatchFailed(context.Background(), client.BatchFailedEvent{Id: e.Id}))
@@ -146,7 +149,7 @@ func TestRecoveryGateBatchFailureRevokesReadiness(t *testing.T) {
 	require.Zero(t, r.completed)
 }
 func TestRecoveryDisabledCompletion(t *testing.T) {
-	h, r := gateHandler()
+	h, r := gateHandler(t)
 	h.delegate.recovery = nil
 	require.NoError(t, h.OnBatchFinalized(context.Background(), client.BatchFinalizedEvent{Id: "batch", Txid: "original-behavior"}))
 	require.Equal(t, 1, r.completed)

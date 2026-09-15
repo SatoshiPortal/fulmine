@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -49,6 +50,11 @@ func (h *delegateBatchSessionHandler) OnBatchFinalized(
 		if a == nil || (a.phase != recoverySubmitted && a.phase != recoverySubmissionUnknown) ||
 			a.batchID != event.Id || a.txid != event.Txid || !slices.Equal(a.taskIDs, h.taskIDs()) {
 			return h.failRecovery(ctx, fmt.Errorf("finalized commitment does not match protected attempt"))
+		}
+		// Record the matching final event before the task DB update. Restart can
+		// replay this one idempotent update without submitting anything to Ark.
+		if err := h.saveRecoveryPhase(ctx, recovery.AttemptFinalized); err != nil {
+			return err
 		}
 	}
 	repo := h.delegate.svc.dbSvc.Delegate()
@@ -116,6 +122,7 @@ type recoveryAttempt struct {
 	taskIDs                  []string
 	receipts                 map[string]string
 	phase                    recoveryPhase
+	persisted                *recovery.ProtectedAttempt
 }
 
 func (h *delegateBatchSessionHandler) taskIDs() []string {
@@ -128,12 +135,53 @@ func (h *delegateBatchSessionHandler) taskIDs() []string {
 }
 
 func (h *delegateBatchSessionHandler) failRecovery(ctx context.Context, cause error) error {
+	// A matching final event is terminal evidence even if its task DB update
+	// failed. Later stream events cannot revoke that observation or its replay.
+	if a := h.recoveryAttempt; a != nil && a.persisted != nil && a.persisted.Phase == recovery.AttemptFinalized {
+		return cause
+	}
 	if h.recoveryAttempt == nil {
 		h.recoveryAttempt = &recoveryAttempt{}
 	}
 	h.recoveryAttempt.phase = recoveryFailed
-	err := h.delegate.svc.dbSvc.Delegate().FailTasks(ctx, "protected attempt failed; reconcile retained recovery data", h.taskIDs()...)
-	return errors.Join(cause, err)
+	// Cancellation must not erase the crash barrier. An earlier durable phase
+	// still blocks retry even when this best-effort quarantine annotation fails.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 8*time.Second)
+	defer cancel()
+	reason := protectedQuarantinePrefix + " failure before confirmed completion; preserve task and outbox; review attempt before retry"
+	var persistErr error
+	if a := h.recoveryAttempt.persisted; a != nil {
+		if a.QuarantineReason == "" {
+			a.QuarantineReason = "protected batch handler failed; preserve evidence and reconcile"
+		}
+		reason = protectedAttemptReason(*a)
+		persistErr = h.delegate.recovery.SaveAttempt(writeCtx, *a)
+	}
+	err := h.delegate.svc.dbSvc.Delegate().FailTasks(writeCtx, reason, h.taskIDs()...)
+	return errors.Join(cause, persistErr, err)
+}
+
+func (h *delegateBatchSessionHandler) saveRecoveryPhase(ctx context.Context, phase recovery.AttemptPhase) error {
+	a := *h.recoveryAttempt.persisted
+	a.Phase = phase
+	a.Receipts = h.recoveryAttempt.receipts
+	if err := h.delegate.recovery.SaveAttempt(ctx, a); err != nil {
+		return err
+	}
+	h.recoveryAttempt.persisted = &a
+	return nil
+}
+
+// A disconnected stream is not a failed batch observation. Retain the actual
+// last phase and quarantine it; a recorded final event only needs its DB update.
+func (h *delegateBatchSessionHandler) abandonRecovery(ctx context.Context) {
+	a := h.recoveryAttempt
+	if h.delegate.recovery == nil || a == nil || a.phase == recoveryFailed || a.persisted == nil || a.persisted.Phase == recovery.AttemptFinalized {
+		return
+	}
+	if err := h.failRecovery(ctx, fmt.Errorf("protected event stream ended before durable finalization")); err != nil {
+		log.WithError(err).Warn("protected attempt requires reconciliation")
+	}
 }
 
 // The callbacks isolate I/O at the two irreversible boundaries. The attempt
@@ -161,6 +209,15 @@ func (h *delegateBatchSessionHandler) finalizeRecovery(ctx context.Context, even
 		return h.failRecovery(ctx, fmt.Errorf("invalid protected candidate"))
 	}
 	a.txid = commit.UnsignedTx.TxID()
+	persisted := recovery.ProtectedAttempt{Version: 1, BatchID: event.Id, CommitmentTxID: a.txid,
+		CandidatePSBT: event.Tx, TaskIDs: ids, Phase: recovery.AttemptPreparing}
+	if err := h.delegate.recovery.BeginAttempt(ctx, persisted); err != nil {
+		// Another handler or a previous process owns this candidate. Do not
+		// overwrite its outcome (including an already completed task).
+		a.phase = recoveryFailed
+		return fmt.Errorf("cannot claim protected attempt: %w", err)
+	}
+	a.persisted = &persisted
 	receipts, err := backup()
 	if err != nil {
 		return h.failRecovery(ctx, err)
@@ -174,13 +231,25 @@ func (h *delegateBatchSessionHandler) finalizeRecovery(ctx context.Context, even
 		}
 	}
 	a.receipts = receipts
+	if err := h.saveRecoveryPhase(ctx, recovery.AttemptAcknowledged); err != nil {
+		return h.failRecovery(ctx, err)
+	}
 	a.phase = recoveryAcknowledged
 	if err := ctx.Err(); err != nil {
 		return h.failRecovery(ctx, err)
 	}
+	if err := h.saveRecoveryPhase(ctx, recovery.AttemptSubmissionUnknown); err != nil {
+		return h.failRecovery(ctx, err)
+	}
 	a.phase = recoverySubmissionUnknown
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	log.WithFields(log.Fields{"batch": a.batchID, "commitment": a.txid}).Info("recovery forfeits submission starting")
 	if err := submit(); err != nil {
+		return err
+	}
+	if err := h.saveRecoveryPhase(ctx, recovery.AttemptSubmitted); err != nil {
 		return err
 	}
 	a.phase = recoverySubmitted

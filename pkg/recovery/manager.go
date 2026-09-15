@@ -196,6 +196,8 @@ type outbox struct {
 	Request          StoreRequest `json:"request"`
 	PlaintextHash    string       `json:"plaintext_hash"`
 	BindingSignature string       `json:"binding_signature"`
+	IntentID         string       `json:"intent_id,omitempty"`
+	BatchID          string       `json:"batch_id,omitempty"`
 }
 
 func (b outbox) bindingDigest(intentID, batchID string) []byte {
@@ -225,7 +227,7 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 		if e != nil {
 			return Receipt{}, e
 		}
-		box = outbox{Request: req, PlaintextHash: Hash(plain)}
+		box = outbox{Request: req, PlaintextHash: Hash(plain), IntentID: intentID, BatchID: batchID}
 		box.BindingSignature, err = Sign(m.key, box.bindingDigest(intentID, batchID))
 		if err != nil {
 			return Receipt{}, err
@@ -241,22 +243,16 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 	if !bytes.Equal(box.Request.Grant.Digest(), r.Grant.Digest()) || box.PlaintextHash != Hash(plain) {
 		return Receipt{}, errors.New("batch recovery data changed after sealing")
 	}
-	if box.BindingSignature == "" {
-		return Receipt{}, errors.New("legacy outbox has no candidate binding; retained file requires reconciliation")
+	if err := m.authenticateOutbox(box, intentID, batchID); err != nil {
+		return Receipt{}, err
 	}
-	if err = Verify(m.Public(), box.bindingDigest(intentID, batchID), box.BindingSignature); err != nil {
-		return Receipt{}, fmt.Errorf("invalid saved outbox candidate binding: %w", err)
-	}
-	if box.Request.Grant.Origin != m.origin || box.Request.Grant.Publisher != m.Public() {
-		return Receipt{}, errors.New("saved outbox publisher or origin mismatch")
-	}
-	record := Record{Grant: box.Request.Grant, Ciphertext: box.Request.Ciphertext, Hash: box.Request.Hash}
-	if _, err := authenticateRecord(record); err != nil {
-		return Receipt{}, fmt.Errorf("invalid saved outbox: %w", err)
-	}
-	sealed, _ := base64.StdEncoding.DecodeString(box.Request.Ciphertext) // authenticated above
-	if box.Request.Bytes != uint64(len(sealed)) {
-		return Receipt{}, errors.New("saved outbox byte count mismatch")
+	// Only the original caller can supply the association needed to verify an
+	// older local binding. Preserve all signed network bytes during this upgrade.
+	if box.IntentID == "" || box.BatchID == "" {
+		box.IntentID, box.BatchID = intentID, batchID
+		if err := saveBox(path, box); err != nil {
+			return Receipt{}, err
+		}
 	}
 	// Reconfirm storage even after a previous ack. This avoids treating a local
 	// receipt as evidence the remote database is still available after rollback.
@@ -276,6 +272,33 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 		return Receipt{}, err
 	}
 	return receipt, nil
+}
+
+func (m *Manager) authenticateOutbox(box outbox, intentID, batchID string) error {
+	if intentID == "" || batchID == "" || len(intentID) > 128 || len(batchID) > 128 || strings.ContainsRune(intentID, 0) || strings.ContainsRune(batchID, 0) {
+		return errors.New("invalid saved outbox association")
+	}
+	if (box.IntentID != "" && box.IntentID != intentID) || (box.BatchID != "" && box.BatchID != batchID) {
+		return errors.New("saved outbox association mismatch")
+	}
+	if box.BindingSignature == "" {
+		return errors.New("legacy outbox has no candidate binding; retained file requires reconciliation")
+	}
+	if err := Verify(m.Public(), box.bindingDigest(intentID, batchID), box.BindingSignature); err != nil {
+		return fmt.Errorf("invalid saved outbox candidate binding: %w", err)
+	}
+	if box.Request.Grant.Origin != m.origin || box.Request.Grant.Publisher != m.Public() {
+		return errors.New("saved outbox publisher or origin mismatch")
+	}
+	record := Record{Grant: box.Request.Grant, Ciphertext: box.Request.Ciphertext, Hash: box.Request.Hash}
+	if _, err := authenticateRecord(record); err != nil {
+		return fmt.Errorf("invalid saved outbox: %w", err)
+	}
+	sealed, _ := base64.StdEncoding.DecodeString(box.Request.Ciphertext) // authenticated above
+	if box.Request.Bytes != uint64(len(sealed)) {
+		return errors.New("saved outbox byte count mismatch")
+	}
+	return nil
 }
 func readOutbox(path string) ([]byte, error) {
 	f, err := os.Open(path)

@@ -131,7 +131,16 @@ func (s *DelegateService) Delegate(
 		if prior.Status != domain.DelegateTaskStatusPending || prior.RecoveryRegistration != task.RecoveryRegistration {
 			return fmt.Errorf("intent already exists with a different registration or terminal outcome")
 		}
+		if handled, err := s.restoreProtectedTask(ctx, prior, false); handled {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("intent has a retained protected outcome; refresh its task status")
+		}
 		return nil
+	}
+	if err := s.checkProtectedOverlap(ctx, task.Intent.Inputs); err != nil {
+		return err
 	}
 
 	// before saving to database, verify that there is no pending task with any overlapping input
@@ -140,6 +149,18 @@ func (s *DelegateService) Delegate(
 		return err
 	}
 	if len(pendingTaskIDs) > 0 {
+		for _, id := range pendingTaskIDs {
+			prior, err := repo.GetByID(ctx, id)
+			if err != nil {
+				return err
+			}
+			if handled, err := s.restoreProtectedTask(ctx, prior, false); handled {
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("overlapping task has a retained protected outcome")
+			}
+		}
 		if !allowReplace {
 			return fmt.Errorf("there is a pending task with overlapping inputs")
 		}
@@ -510,6 +531,16 @@ func (s *DelegateService) restorePendingTasks() error {
 			return nil
 		default:
 		}
+		task, err := s.svc.dbSvc.Delegate().GetByID(s.ctx, pendingTask.ID)
+		if err != nil {
+			return err
+		}
+		if handled, err := s.restoreProtectedTask(s.ctx, task, true); handled {
+			if err != nil {
+				log.WithError(err).Warnf("protected task %s was not scheduled", task.ID)
+			}
+			continue
+		}
 
 		taskID := pendingTask.ID // capture value
 		if err = s.svc.schedulerSvc.ScheduleTaskAtTime(pendingTask.ScheduledAt, func() {
@@ -537,13 +568,16 @@ func (s *DelegateService) registerDelegate(id string) error {
 		// task is not pending, it has been cancelled by another task
 		return nil
 	}
+	if handled, err := s.restoreProtectedTask(s.ctx, task, false); handled {
+		return err
+	}
 	if s.recovery != nil {
 		cfg, err := s.svc.GetConfigData(s.ctx)
 		if err != nil {
 			return err
 		}
-		if cfg.Network.Name != "regtest" {
-			return fmt.Errorf("recovery prototype supports regtest only")
+		if err := validateRecoveryNetwork(cfg.Network.Name); err != nil {
+			return err
 		}
 		r, err := recovery.ParseRegistration(task.RecoveryRegistration)
 		if err != nil {
@@ -711,6 +745,7 @@ func (s *DelegateService) joinDelegateBatch(
 		delegate:      s,
 		selectedTasks: selectedDelegateTasks,
 	}
+	defer handler.abandonRecovery(ctx)
 
 	for {
 		select {
@@ -835,6 +870,11 @@ func (s *DelegateService) monitorVtxosSpent(ctx context.Context) {
 				}
 
 				if len(pendingTaskIds) > 0 {
+					pendingTaskIds, err = s.cancellableUnprotectedTasks(ctx, pendingTaskIds)
+					if err != nil {
+						log.WithError(err).Warn("retained protected tasks prevent automatic cancellation")
+						pendingTaskIds = nil
+					}
 					if err := repo.CancelTasks(ctx, pendingTaskIds...); err != nil {
 						log.WithError(err).Warnf("failed to cancel %d tasks", len(pendingTaskIds))
 					} else {
