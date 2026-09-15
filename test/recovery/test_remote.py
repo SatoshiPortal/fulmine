@@ -68,9 +68,14 @@ class BoundedCommandTests(unittest.TestCase):
         # A killed orphan can briefly remain a zombie until PID 1 reaps it.
         state = Path(f"/proc/{pid}/stat")
         deadline = time.monotonic() + 2
-        while state.exists() and state.read_text().split()[2] != "Z" and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            try:
+                if state.read_text().split()[2] == "Z":
+                    return
+            except (FileNotFoundError, ProcessLookupError):
+                return
             time.sleep(0.01)
-        self.assertTrue(not state.exists() or state.read_text().split()[2] == "Z")
+        self.fail("child is still running")
 
     def test_existing_log_is_not_overwritten(self):
         self.log.write_text("original")
