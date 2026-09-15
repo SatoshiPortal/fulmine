@@ -1,0 +1,346 @@
+{
+  "services": {
+    "bitcoin": {
+      "environment": {
+        "BITCOIN_EXTRA_ARGS": "rpcbind=0.0.0.0\nrpcallowip=0.0.0.0/0\nrpcuser=admin1\nrpcpassword=123\ntxindex=1\nfallbackfee=0.00001\nminrelaytxfee=0\nmintxfee=0\nblockmintxfee=0\nwhitelist=0.0.0.0/0\nwhitelistforcerelay=1\nzmqpubrawblock=tcp://0.0.0.0:28332\nzmqpubrawtx=tcp://0.0.0.0:28333\nblockfilterindex=1\npeerblockfilters=1\ndnsseed=0\ndiscover=0\nconnect=0\nlisten=1\nbind=0.0.0.0:18444\ndbcache=64\nmaxmempool=32\n",
+        "BITCOIN_NETWORK": "regtest"
+      },
+      "image": "btcpayserver/bitcoin@sha256:a753d6fe3d8051ff03015ec77f068d9698b85b9abe8864a783ed22a572c9dcce",
+      "stop_grace_period": "30s",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "bitcoin_datadir",
+          "target": "/data",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "256m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "postgres": {
+      "environment": {
+        "POSTGRES_DB": "arkd",
+        "POSTGRES_HOST_AUTH_METHOD": "trust"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d arkd"
+        ],
+        "timeout": "5s",
+        "interval": "5s",
+        "retries": 20,
+        "start_period": "5s"
+      },
+      "image": "postgres@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "postgres_datadir",
+          "target": "/var/lib/postgresql/data",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "192m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "nbxplorer": {
+      "depends_on": {
+        "bitcoin": {
+          "condition": "service_started",
+          "required": true
+        },
+        "postgres": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": {
+        "NBXPLORER_BIND": "0.0.0.0:32838",
+        "NBXPLORER_BTCNODEENDPOINT": "bitcoin:18444",
+        "NBXPLORER_BTCRPCPASSWORD": "123",
+        "NBXPLORER_BTCRPCURL": "http://bitcoin:18443/",
+        "NBXPLORER_BTCRPCUSER": "admin1",
+        "NBXPLORER_CHAINS": "btc",
+        "NBXPLORER_EXPOSERPC": "1",
+        "NBXPLORER_NETWORK": "regtest",
+        "NBXPLORER_NOAUTH": "1",
+        "NBXPLORER_POSTGRES": "User ID=postgres;Host=postgres;Port=5432;Application Name=nbxplorer;MaxPoolSize=20;Database=nbxplorer",
+        "NBXPLORER_SIGNALFILESDIR": "/datadir",
+        "NBXPLORER_TRIMEVENTS": "10000",
+        "NBXPLORER_VERBOSE": "1"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD-SHELL",
+          "bash -c '</dev/tcp/127.0.0.1/32838'"
+        ],
+        "timeout": "5s",
+        "interval": "5s",
+        "retries": 40,
+        "start_period": "20s"
+      },
+      "image": "nicolasdorier/nbxplorer@sha256:d6ac82366a47f7b3b133b99de5b860fcee63e1072265d8688b3c841f2f42af50",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "nbxplorer_datadir",
+          "target": "/datadir",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "512m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "fulcrum": {
+      "command": [
+        "Fulcrum",
+        "--bitcoind",
+        "bitcoin:18443",
+        "--rpcuser",
+        "admin1",
+        "--rpcpassword",
+        "123",
+        "--tcp",
+        "0.0.0.0:50001",
+        "--ws",
+        "0.0.0.0:50003"
+      ],
+      "depends_on": {
+        "bitcoin": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "image": "cculianu/fulcrum@sha256:72d8b2f9142f83a51c6c3ba2f6931b496a08bede610b28ef2315b87aa1e3bb64",
+      "stop_grace_period": "30s",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "fulcrum_datadir",
+          "target": "/data",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "256m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "mempool_mariadb": {
+      "environment": {
+        "MYSQL_DATABASE": "mempool",
+        "MYSQL_PASSWORD": "mempool",
+        "MYSQL_ROOT_PASSWORD": "mempool_root",
+        "MYSQL_USER": "mempool"
+      },
+      "image": "mariadb@sha256:a530aeeefd82f4fa5150f391b6c75462140904780338766f6b03acecb1cca3ce",
+      "stop_grace_period": "1m0s",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "mempool_mariadb",
+          "target": "/var/lib/mysql",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "192m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "mempool_api": {
+      "command": [
+        "./wait-for-it.sh",
+        "mempool_mariadb:3306",
+        "--timeout=720",
+        "--strict",
+        "--",
+        "./start.sh"
+      ],
+      "depends_on": {
+        "fulcrum": {
+          "condition": "service_started",
+          "required": true
+        },
+        "mempool_mariadb": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "CORE_RPC_HOST": "bitcoin",
+        "CORE_RPC_PASSWORD": "123",
+        "CORE_RPC_PORT": "18443",
+        "CORE_RPC_TIMEOUT": "120000",
+        "CORE_RPC_USERNAME": "admin1",
+        "DATABASE_DATABASE": "mempool",
+        "DATABASE_ENABLED": "true",
+        "DATABASE_HOST": "mempool_mariadb",
+        "DATABASE_PASSWORD": "mempool",
+        "DATABASE_PORT": "3306",
+        "DATABASE_USERNAME": "mempool",
+        "ELECTRUM_HOST": "fulcrum",
+        "ELECTRUM_PORT": "50001",
+        "ELECTRUM_TLS_ENABLED": "false",
+        "LIGHTNING_ENABLED": "false",
+        "MEMPOOL_BACKEND": "electrum",
+        "MEMPOOL_CACHE_DIR": "/backend/cache",
+        "MEMPOOL_HTTP_PORT": "8999",
+        "MEMPOOL_INDEXING_BLOCKS_AMOUNT": "-1",
+        "MEMPOOL_NETWORK": "regtest",
+        "MEMPOOL_POLL_RATE_MS": "2000",
+        "MEMPOOL_STDOUT_LOG_MIN_PRIORITY": "debug",
+        "NODE_OPTIONS": "--max-old-space-size=320",
+        "STATISTICS_ENABLED": "false"
+      },
+      "image": "mempool/backend@sha256:358c0a517c8dcf26e7f5c02447de5bab33ec7e3fa6318685cf8012ce36098e3a",
+      "init": true,
+      "stop_grace_period": "1m0s",
+      "user": "1000:1000",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "mempool_api_datadir",
+          "target": "/backend/cache",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "512m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "arkd-wallet": {
+      "depends_on": {
+        "bitcoin": {
+          "condition": "service_started",
+          "required": true
+        },
+        "nbxplorer": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": {
+        "ARKD_WALLET_DEPRECATED_SIGNER_KEYS": "",
+        "ARKD_WALLET_LOG_LEVEL": "5",
+        "ARKD_WALLET_NBXPLORER_URL": "http://nbxplorer:32838",
+        "ARKD_WALLET_NETWORK": "regtest",
+        "ARKD_WALLET_SIGNER_KEY": "afcd3fa10f82a05fddc9574fdb13b3991b568e89cc39a72ba4401df8abef35f0"
+      },
+      "image": "ghcr.io/arkade-os/arkd-wallet@sha256:9c4092115440039e87f1fc7e053c388d508abb36edbe9fe07c9e0a140948edd2",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "ark_wallet_datadir",
+          "target": "/app/data",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "256m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    },
+    "arkd": {
+      "depends_on": {
+        "arkd-wallet": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "ARKD_BOARDING_EXIT_DELAY": "180",
+        "ARKD_CHECKPOINT_EXIT_DELAY": "5",
+        "ARKD_DB_TYPE": "sqlite",
+        "ARKD_ESPLORA_URL": "http://mempool_api:8999/api/v1",
+        "ARKD_EVENT_DB_TYPE": "badger",
+        "ARKD_LIVE_STORE_TYPE": "inmemory",
+        "ARKD_LOG_LEVEL": "4",
+        "ARKD_NO_MACAROONS": "true",
+        "ARKD_NO_TLS": "true",
+        "ARKD_PUBLIC_UNILATERAL_EXIT_DELAY": "5",
+        "ARKD_ROUND_MIN_PARTICIPANTS_COUNT": "1",
+        "ARKD_SESSION_DURATION": "10",
+        "ARKD_UNILATERAL_EXIT_DELAY": "5",
+        "ARKD_UNLOCKER_PASSWORD": "secret",
+        "ARKD_UNLOCKER_TYPE": "env",
+        "ARKD_VTXO_MIN_AMOUNT": "1",
+        "ARKD_VTXO_TREE_EXPIRY": "180",
+        "ARKD_WALLET_ADDR": "arkd-wallet:6060",
+        "ARK_OFFCHAIN_INPUT_FEE": "amount * 0.01",
+        "ARK_OFFCHAIN_OUTPUT_FEE": "0.0",
+        "ARK_ONCHAIN_INPUT_FEE": "amount * 0.01",
+        "ARK_ONCHAIN_OUTPUT_FEE": "250.0"
+      },
+      "image": "ghcr.io/arkade-os/arkd@sha256:f723e26a1bff7fa529dc0abd414088f294e43be8916dbb8f081dccd6fcad90b5",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "ark_datadir",
+          "target": "/app/data",
+          "volume": {}
+        }
+      ],
+      "mem_limit": "384m",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "2"
+        }
+      }
+    }
+  },
+  "volumes": {
+    "bitcoin_datadir": {},
+    "postgres_datadir": {},
+    "nbxplorer_datadir": {},
+    "fulcrum_datadir": {},
+    "mempool_mariadb": {},
+    "mempool_api_datadir": {},
+    "ark_wallet_datadir": {},
+    "ark_datadir": {}
+  },
+  "networks": {
+    "default": {
+      "internal": true
+    }
+  }
+}

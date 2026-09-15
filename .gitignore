@@ -35,3 +35,5 @@ DS_Store
 
 /test/recovery/artifacts/
 /test/recovery/__pycache__/
+/test/recovery/live/artifacts/
+/test/recovery/live/__pycache__/

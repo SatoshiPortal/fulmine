@@ -1,0 +1,784 @@
+[
+  {
+    "group": "authorization",
+    "case": "unsigned fetch",
+    "tests": [
+      "TestBackupServerIntegration"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "publisher cannot fetch",
+    "tests": [
+      "TestBackupServerIntegration"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "other owner receives no records",
+    "tests": [
+      "TestBackupServerIntegration"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "owner substitution",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "grant mutation after authorization",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "payload hash and length mismatch",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "noncanonical base64",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "invalid scope or grant ID",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "zero or excessive record quota",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "zero or excessive byte quota",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "empty reversed or excessive validity window",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "wrong origin or publisher",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "not-yet-valid append",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "expired new append",
+    "tests": [
+      "recovery::tests::signed_invalid_grants_and_payload_boundaries"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "request clock skew boundaries",
+    "tests": [
+      "recovery::tests::clock_and_grant_endpoints_are_inclusive"
+    ]
+  },
+  {
+    "group": "authorization",
+    "case": "grant start/end inclusivity",
+    "tests": [
+      "recovery::tests::clock_and_grant_endpoints_are_inclusive"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "concurrent uploads at quota boundary",
+    "tests": [
+      "recovery::tests::concurrent_uploads_cannot_exceed_grant_quota"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "exact byte limit",
+    "tests": [
+      "recovery::tests::byte_quota_is_exact_and_failures_leave_no_grant"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "failed admission leaves no grant reservation",
+    "tests": [
+      "recovery::tests::byte_quota_is_exact_and_failures_leave_no_grant"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "exact retry after grant expiry",
+    "tests": [
+      "recovery::tests::exact_retry_survives_grant_expiry_but_new_append_does_not"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "historical fetch after expiry",
+    "tests": [
+      "recovery::tests::exact_retry_survives_grant_expiry_but_new_append_does_not"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "mutating an existing grant cannot change quotas",
+    "tests": [
+      "recovery::tests::grant_quota_and_binding_are_persistent"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "server restart preserves records",
+    "tests": [
+      "TestBackupServerIntegration"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "stable snapshot during concurrent appends",
+    "tests": [
+      "TestBackupServerIntegration"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "signed invalid cursor",
+    "tests": [
+      "recovery::tests::signed_cursor_boundaries_and_rollback"
+    ]
+  },
+  {
+    "group": "storage",
+    "case": "known snapshot detects rollback",
+    "tests": [
+      "recovery::tests::signed_cursor_boundaries_and_rollback"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "remote commit then dropped response",
+    "tests": [
+      "TestCommittedUploadLostResponse"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "publisher killed before retry",
+    "tests": [
+      "TestCommittedUploadLostResponse"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "quota not charged twice on exact retry",
+    "tests": [
+      "TestCommittedUploadLostResponse"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "competing publisher manager",
+    "tests": [
+      "TestPublisherOwnershipAndKeyValidation"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "publisher key survives restart",
+    "tests": [
+      "TestPublisherOwnershipAndKeyValidation"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "invalid stored key length, zero or overflow",
+    "tests": [
+      "TestPublisherOwnershipAndKeyValidation"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "cancellation while waiting for delivery lock",
+    "tests": [
+      "TestDeliveryLockHonorsCancellation"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "write failure before upload",
+    "tests": [
+      "TestReceiptAndLocalWriteFailures"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "local write failure after remote receipt",
+    "tests": [
+      "TestReceiptAndLocalWriteFailures"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "wrong receipt hash",
+    "tests": [
+      "TestReceiptAndLocalWriteFailures"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "SQLite and Badger registration restart",
+    "tests": [
+      "TestRecoveryRegistrationSurvivesRestart"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "duplicate insert cannot replace registration",
+    "tests": [
+      "TestRecoveryRegistrationSurvivesRestart"
+    ]
+  },
+  {
+    "group": "durability",
+    "case": "terminal task retains binding",
+    "tests": [
+      "TestRecoveryRegistrationSurvivesRestart"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "changed event ID/content/signatures/pubkey/time",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "wrong recipient or grant tag",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "missing or extra tags",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "wrong event kind",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "changed grant signature or scope",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "unknown envelope fields",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "trailing envelope JSON",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "noncanonical record base64",
+    "tests": [
+      "TestEnvelopeTamperingMatrix"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "valid outer signatures with invalid encrypted contents",
+    "tests": [
+      "TestEnvelopeAuthenticatedBadCiphertext"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "minimum and maximum plaintext",
+    "tests": [
+      "TestEnvelopeHistoricalAndSizeBoundaries"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "empty and excessive plaintext",
+    "tests": [
+      "TestEnvelopeHistoricalAndSizeBoundaries"
+    ]
+  },
+  {
+    "group": "encryption",
+    "case": "expired grant remains decryptable",
+    "tests": [
+      "TestEnvelopeHistoricalAndSizeBoundaries"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "nil tree or commitment",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "broken ancestry",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "missing or extra transaction input",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "missing output",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "negative or inflated amount",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "changed destination script",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "missing or invalid signature",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "cyclic tree",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "branch",
+    "case": "wrong expected output or amount",
+    "tests": [
+      "TestBranchAdversarialMatrix"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "duplicate finalization is idempotent",
+    "tests": [
+      "TestRecoveryGateOrdersAndBindsCandidate"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "finalized commitment mismatch",
+    "tests": [
+      "TestRecoveryGateOrdersAndBindsCandidate"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "backup precedes forfeit submission",
+    "tests": [
+      "TestRecoveryGateOrdersAndBindsCandidate"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "timeout before backup",
+    "tests": [
+      "TestRecoveryGateRejectsFailuresBeforeSubmission"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "missing acknowledgement",
+    "tests": [
+      "TestRecoveryGateRejectsFailuresBeforeSubmission"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "changed batch identity",
+    "tests": [
+      "TestRecoveryGateRejectsFailuresBeforeSubmission"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "changed task membership",
+    "tests": [
+      "TestRecoveryGateRejectsFailuresBeforeSubmission"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "task failure persistence error",
+    "tests": [
+      "TestRecoveryGateRejectsFailuresBeforeSubmission"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "missing connectors",
+    "tests": [
+      "TestRecoveryGateMissingConnectors"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "lost forfeit submission response",
+    "tests": [
+      "TestRecoverySubmissionLostResponse"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "matching finalized event resolves uncertain submission",
+    "tests": [
+      "TestRecoverySubmissionLostResponse"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "completion database error",
+    "tests": [
+      "TestRecoverySubmissionLostResponse"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "failure after acknowledgement revokes readiness",
+    "tests": [
+      "TestRecoveryGateBatchFailureRevokesReadiness"
+    ]
+  },
+  {
+    "group": "batch",
+    "case": "recovery-disabled behavior",
+    "tests": [
+      "TestRecoveryDisabledCompletion"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "interrupted page resumes",
+    "tests": [
+      "TestFetchResumeAndLocalIntegrity"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "partial manifest is explicit",
+    "tests": [
+      "TestFetchResumeAndLocalIntegrity"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "different owner cannot reuse directory",
+    "tests": [
+      "TestFetchResumeAndLocalIntegrity"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "modified local candidate rejected",
+    "tests": [
+      "TestFetchResumeAndLocalIntegrity"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "duplicate records",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "zero record ID",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "record outside snapshot",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "nonprogressing or incorrect next cursor",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "wrong origin",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "tampered record",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "retrieval",
+    "case": "snapshot rollback",
+    "tests": [
+      "TestFetchRejectsMalformedPages"
+    ]
+  },
+  {
+    "group": "bitcoin",
+    "case": "no user fees before branch capture or retrieval",
+    "tests": [
+      "TestBitcoinLateFunding"
+    ]
+  },
+  {
+    "group": "bitcoin",
+    "case": "later user funding",
+    "tests": [
+      "TestBitcoinLateFunding"
+    ]
+  },
+  {
+    "group": "bitcoin",
+    "case": "unfunded parent rejected",
+    "tests": [
+      "TestBitcoinLateFunding"
+    ]
+  },
+  {
+    "group": "bitcoin",
+    "case": "premature CSV sweep rejected",
+    "tests": [
+      "TestBitcoinLateFunding"
+    ]
+  },
+  {
+    "group": "bitcoin",
+    "case": "confirmed owner payout",
+    "tests": [
+      "TestBitcoinLateFunding"
+    ]
+  },
+  {
+    "group": "live",
+    "case": "real SDK prepares delegated input",
+    "tests": [
+      "TestLivePrepare"
+    ]
+  },
+  {
+    "group": "live",
+    "case": "real Fulmine replacement backup",
+    "tests": [
+      "TestLiveRestore"
+    ]
+  },
+  {
+    "group": "live",
+    "case": "fresh process seed recovery after service loss",
+    "tests": [
+      "TestLiveRestore"
+    ]
+  },
+  {
+    "group": "live",
+    "case": "real replacement unroll and final sweep",
+    "tests": [
+      "TestLiveRestore"
+    ]
+  },
+  {
+    "group": "unimplemented",
+    "case": "full mobile wallet import",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "baseline backup covers preconfirmed original VTXO",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "independent proof of no omitted backup tail",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "delegate/operator collusion analysis",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "live outage before forfeits",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "live restart after acknowledgement",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "commitment reorg during restore",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "sweep reorg",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "expired/swept ancestor",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "fee exhaustion mid-unroll",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "insufficient-fee package retry",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "conflicting fee UTXO spend",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "interrupted unroll resumption",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "maximum-size real Arkade tree",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "local disk exhaustion/fsync failure",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "backup global/owner capacity exhaustion",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "backup database corruption/schema mismatch",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "publisher rotation with existing grants",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "multi-user batch with partial backup failure",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "flood/admission overload",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "power loss during SQLite commit",
+    "tests": []
+  },
+  {
+    "group": "unimplemented",
+    "case": "mass exit package policy limits",
+    "tests": []
+  },
+  {
+    "group": "live",
+    "case": "backup killed before actual round forfeits preserves original VTXO",
+    "tests": [
+      "TestLiveOriginalUnspent"
+    ]
+  },
+  {
+    "group": "identity",
+    "case": "Bull BIP85-derived Nostr identity matches browser fixture",
+    "tests": [
+      "TestLiveBullNostrDerivation"
+    ]
+  }
+]

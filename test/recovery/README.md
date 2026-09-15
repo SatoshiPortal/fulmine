@@ -75,4 +75,5 @@ in 279.746 seconds, including upload and cleanup:
 
 The private artifact directory for this run contains `report.json`, per-suite
 logs, and the hashes of every uploaded binary. This is bounded component evidence;
-the full offline refresh-to-exit acceptance scenario remains to be demonstrated.
+the separate [live harness](live/README.md) exercises real delegated refresh and
+seed-only Bitcoin exits. It has its own fixtures, reports, and self-test command.
