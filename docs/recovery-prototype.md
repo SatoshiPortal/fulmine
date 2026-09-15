@@ -3,6 +3,9 @@
 Branch: `prototype/encrypted-recovery` in `SatoshiPortal/fulmine`.
 Companion: `prototype/arkade-recovery` in `SatoshiPortal/BULL-metadata-backup`.
 
+Exact signed bytes, fields and compatibility fixtures are specified in
+[the version-1 wire contract](recovery-wire-v1.md).
+
 This experimental delegate extension accepts regtest and Mutinynet only. It
 captures a replacement VTXO's signed transaction ancestry during batch
 finalization, encrypts the recovery bundle to the user's Nostr public key, and
