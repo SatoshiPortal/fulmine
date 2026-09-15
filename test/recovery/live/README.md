@@ -61,16 +61,19 @@ production sponsorship feature. Fee amounts are fixture values, not an exit
 cost estimate. Only one branch is used; mass exits, deeper trees, fee spikes,
 reorgs and batch-expiry races require additional scenarios.
 
-The `live` suite uses eight isolated, pinned containers with an aggregate 2.5GB
+The `live` suite uses nine isolated, pinned containers with an aggregate 2.6GB
 memory limit. Run it on an authorized VM, with Docker and its pinned images
 already installed. `--live-binaries` accepts `fulmine`, `recovery-client`,
 `recovery-tests` (the compiled `pkg/recovery` tests), and
-`arkade-recovery-prototype`. Without that option, it builds the Go binaries and
+`backup-server`. The live round uses the integrated Rust storage owner behind a
+loopback nginx proxy that overwrites `X-Real-IP`; clients send no source identity
+header. Without that option, it builds the Go binaries and
 builds the Rust backup as well. On the test VM, explicitly install the pinned
 images before the first run:
 
 ```sh
 docker compose -f test/recovery/live/live.compose.json pull
+docker pull nginx@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
 ```
 
 Prebuilt runs need no compiler or companion source checkout on the VM. Copy this
@@ -79,7 +82,7 @@ working directory if the harness is detached, and pass `--live-binaries`.
 Include `build-manifest.json` beside the binaries to identify their source:
 
 ```json
-{"sources":{"fulmine":"<40-character Git revision>","backup":"<40-character Git revision>"},"sha256":{"fulmine":"<sha256>","recovery-client":"<sha256>","recovery-tests":"<sha256>","arkade-recovery-prototype":"<sha256>"}}
+{"sources":{"fulmine":"<40-character Git revision>","backup":"<40-character Git revision>"},"sha256":{"fulmine":"<sha256>","recovery-client":"<sha256>","recovery-tests":"<sha256>","backup-server":"<sha256>"}}
 ```
 
 The runner verifies every supplied hash before starting services. Each live

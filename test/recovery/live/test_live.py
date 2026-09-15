@@ -67,6 +67,23 @@ class LiveEvidenceTests(unittest.TestCase):
 
 
 class CleanupTests(unittest.TestCase):
+    def test_backup_proxy_is_owned_loopback_and_overwrites_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stack = live.Stack.__new__(live.Stack)
+            stack.run = Mock(id="owned", directory=Path(temp))
+            stack.config = {"services": {}}
+            stack.path = Path(temp)/"compose.json"
+            stack.compose = Mock()
+            stack.backup_proxy(12345, 12346)
+            service = json.loads(stack.path.read_text())["services"]["backup-proxy"]
+            config = (Path(temp)/"backup-nginx.conf").read_text()
+            self.assertEqual(service["labels"]["bull.recovery.run"], "owned")
+            self.assertEqual(service["image"], live.NGINX_IMAGE)
+            self.assertIn("listen 127.0.0.1:12345;", config)
+            self.assertIn("proxy_pass http://127.0.0.1:12346;", config)
+            self.assertIn("proxy_set_header X-Real-IP $remote_addr;", config)
+            self.assertNotIn("$http_x_real_ip", config)
+
     def test_failed_logs_do_not_suppress_owned_compose_down(self):
         stack = live.Stack.__new__(live.Stack)
         stack.processes = []

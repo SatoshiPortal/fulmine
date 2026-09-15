@@ -19,7 +19,8 @@ import urllib.parse
 
 from paths import BACKUP, FULMINE, HARNESS
 
-BINARIES = ("fulmine", "recovery-client", "recovery-tests", "arkade-recovery-prototype")
+BINARIES = ("fulmine", "recovery-client", "recovery-tests", "backup-server")
+NGINX_IMAGE = "nginx@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236"
 
 
 def binary_manifest(directory, supplied=None):
@@ -46,6 +47,8 @@ def request(url, body=None):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as response:
+        if response.status == 204:
+            return True
         return json.load(response)
 
 
@@ -116,6 +119,26 @@ class Stack:
         process = subprocess.Popen(argv, env=env or self.run.env, stdout=log, stderr=subprocess.STDOUT)
         self.processes.append((process,log))
         return process
+
+    def backup_proxy(self, port, upstream_port):
+        # The deployed Rust router trusts only the reverse proxy's overwritten
+        # source header. Exercise that boundary without teaching clients to set it.
+        config = self.run.directory / "backup-nginx.conf"
+        config.write_text("events {}\nhttp { access_log off; server {\n"
+            f"listen 127.0.0.1:{port};\n"
+            "client_max_body_size 2m;\nlocation / {\n"
+            f"proxy_pass http://127.0.0.1:{upstream_port};\n"
+            "proxy_set_header X-Real-IP $remote_addr;\n"
+            "proxy_set_header Host $http_host;\n} } }\n")
+        self.config["services"]["backup-proxy"] = {
+            "image": NGINX_IMAGE, "network_mode": "host", "mem_limit": "32m",
+            "pids_limit": 64, "labels": {"bull.recovery.run": self.run.id},
+            "volumes": [{"type": "bind", "source": str(config),
+                         "target": "/etc/nginx/nginx.conf", "read_only": True}],
+            "logging": {"driver": "json-file", "options": {"max-size": "1m", "max-file": "1"}},
+        }
+        self.path.write_text(json.dumps(self.config))
+        self.compose("up", "-d", "--pull", "never", "backup-proxy")
 
     def close(self):
         failures = []
@@ -190,11 +213,11 @@ def acceptance(run, binaries=None, backup_outage=False):
         manifest = binaries / "build-manifest.json"
         supplied = json.loads(manifest.read_text()) if manifest.exists() else None
     else:
-        run.command("live-build-backup", ["cargo", "build", "--locked", "--bin", "arkade-recovery-prototype"], BACKUP)
+        run.command("live-build-backup", ["cargo", "build", "--locked", "--bin", "backup-server"], BACKUP)
         run.command("live-build-fulmine", ["go","build","-o",str(run.directory/"fulmine"),"./cmd/fulmine"], FULMINE)
         run.command("live-build-client", ["go","build","-o",str(run.directory/"recovery-client"),"./cmd/recovery-client"], FULMINE)
         run.command("live-build-tests", ["go","test","-c","-o",str(run.directory/"recovery-tests"),"./pkg/recovery"], FULMINE)
-        shutil.copy2(BACKUP/"target/debug/arkade-recovery-prototype", run.directory/"arkade-recovery-prototype")
+        shutil.copy2(BACKUP/"target/debug/backup-server", run.directory/"backup-server")
         supplied = binary_manifest(run.directory)
         supplied["sources"] = {name: run.command("source-"+name, ["git", "rev-parse", "HEAD"], root).strip() for name, root in (("fulmine", FULMINE), ("backup", BACKUP))}
         run.source_worktree_dirty = {name: bool(run.command("source-dirty-"+name, ["git", "status", "--porcelain"], root).strip()) for name, root in (("fulmine", FULMINE), ("backup", BACKUP))}
@@ -235,12 +258,20 @@ def acceptance(run, binaries=None, backup_outage=False):
         for _ in range(21): stack.rpc("sendtoaddress",[address,1],"/wallet/faucet")
         stack.mine()
         request(admin+"/v1/admin/intentFees",{"fees":{k:"0.0" for k in ["offchainInputFee","onchainInputFee","offchainOutputFee","onchainOutputFee"]}})
-        ports=[free_port() for _ in range(4)]
-        grpc_port,http_port,delegate_port,backup_port=ports
+        ports=[free_port() for _ in range(5)]
+        grpc_port,http_port,delegate_port,backup_port,storage_port=ports
         origin=f"http://127.0.0.1:{backup_port}"
         data=run.directory/"fulmine-data"
         publisher=run.command("live-publisher",[str(run.directory/"recovery-client"),"publisher","--out",str(data/"recovery-prototype"),"--origin",origin]).strip()
-        backup = stack.process("live-backup",[str(run.directory/"arkade-recovery-prototype"),str(run.directory/"backup.sqlite"),f"127.0.0.1:{backup_port}",origin,publisher])
+        backup_env = {key: value for key, value in run.env.items() if not key.startswith("BACKUP_SERVER_")}
+        backup_env.update(BACKUP_SERVER_DB_PATH=str(run.directory/"backup.sqlite"),
+            BACKUP_SERVER_BIND=f"127.0.0.1:{storage_port}",
+            BACKUP_SERVER_MAX_LIVE_BYTES=str(256*1024*1024), BACKUP_SERVER_MAX_HEADS="128",
+            BACKUP_SERVER_LIMITER_MAX_SUBJECTS="1000",
+            BACKUP_SERVER_RECOVERY_ORIGIN=origin, BACKUP_SERVER_RECOVERY_PUBLISHER=publisher)
+        backup = stack.process("live-backup",[str(run.directory/"backup-server"), "serve"], backup_env)
+        stack.backup_proxy(backup_port, storage_port)
+        wait_for("integrated backup proxy", lambda: request(origin+"/healthz"))
         env=run.env.copy()
         env["FULMINE_LOG_LEVEL"] = "5"
         env.update(FULMINE_DATADIR=str(data),FULMINE_GRPC_PORT=str(grpc_port),FULMINE_HTTP_PORT=str(http_port),FULMINE_DELEGATE_PORT=str(delegate_port),FULMINE_DELEGATE_ENABLED="true",FULMINE_DELEGATE_FEE="0",FULMINE_ARK_SERVER=ark,FULMINE_ESPLORA_URL=explorer,FULMINE_NO_MACAROONS="true",FULMINE_SCHEDULER_POLL_INTERVAL="1",FULMINE_DISABLE_TELEMETRY="true",FULMINE_RECOVERY_PROTOTYPE_URL=origin)
