@@ -2,7 +2,7 @@
   "services": {
     "bitcoin": {
       "environment": {
-        "BITCOIN_EXTRA_ARGS": "rpcbind=0.0.0.0\nrpcallowip=0.0.0.0/0\nrpcuser=admin1\nrpcpassword=123\ntxindex=1\nfallbackfee=0.00001\nminrelaytxfee=0\nmintxfee=0\nblockmintxfee=0\nwhitelist=0.0.0.0/0\nwhitelistforcerelay=1\nzmqpubrawblock=tcp://0.0.0.0:28332\nzmqpubrawtx=tcp://0.0.0.0:28333\nblockfilterindex=1\npeerblockfilters=1\ndnsseed=0\ndiscover=0\nconnect=0\nlisten=1\nbind=0.0.0.0:18444\ndbcache=64\nmaxmempool=32\n",
+        "BITCOIN_EXTRA_ARGS": "rpcbind=0.0.0.0\nrpcallowip=0.0.0.0/0\nrpcuser=admin1\nrpcpassword=123\ntxindex=1\nfallbackfee=0.00001\nminrelaytxfee=0.00001\nmintxfee=0\nblockmintxfee=0\nwhitelist=0.0.0.0/0\nwhitelistforcerelay=1\nzmqpubrawblock=tcp://0.0.0.0:28332\nzmqpubrawtx=tcp://0.0.0.0:28333\nblockfilterindex=1\npeerblockfilters=1\ndnsseed=0\ndiscover=0\nconnect=0\nlisten=1\nbind=0.0.0.0:18444\ndbcache=64\nmaxmempool=32\n",
         "BITCOIN_NETWORK": "regtest"
       },
       "image": "btcpayserver/bitcoin@sha256:a753d6fe3d8051ff03015ec77f068d9698b85b9abe8864a783ed22a572c9dcce",

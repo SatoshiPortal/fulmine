@@ -531,21 +531,21 @@ func TestLiveRestore(t *testing.T) {
 	}
 	rpc.must(t, "scantxoutset", []any{"start", []string{"addr(" + feeAddress + ")"}}, &scan)
 	require.Zero(t, scan.Total, "fees must be absent until after retrieval and verification")
-	var fundingID, fundingRaw string
-	faucet.must(t, "sendtoaddress", []any{feeAddress, 0.001}, &fundingID)
-	mine(1)
-	rpc.must(t, "getrawtransaction", []any{fundingID}, &fundingRaw)
-	funding := decodeTx(t, fundingRaw)
-	var feePoint wire.OutPoint
-	var feeOutput *wire.TxOut
-	for i, out := range funding.TxOut {
-		if bytes.Equal(out.PkScript, feeScript) {
-			feePoint = wire.OutPoint{Hash: funding.TxHash(), Index: uint32(i)}
-			feeOutput = out
+	fundFees := func(sats int64) (string, wire.OutPoint, *wire.TxOut) {
+		var id, raw string
+		faucet.must(t, "sendtoaddress", []any{feeAddress, float64(sats) / 1e8}, &id)
+		mine(1)
+		rpc.must(t, "getrawtransaction", []any{id}, &raw)
+		tx := decodeTx(t, raw)
+		for i, out := range tx.TxOut {
+			if bytes.Equal(out.PkScript, feeScript) {
+				return id, wire.OutPoint{Hash: tx.TxHash(), Index: uint32(i)}, out
+			}
 		}
+		t.Fatal("fee funding output missing")
+		return "", wire.OutPoint{}, nil
 	}
-	require.NotNil(t, feeOutput)
-	for _, packet := range packets {
+	packageFor := func(packet *psbt.Packet, feePoint wire.OutPoint, feeOutput *wire.TxOut, fee int64) (*wire.MsgTx, *wire.MsgTx) {
 		parent := packet.UnsignedTx.Copy()
 		parent.TxIn[0].Witness = wire.TxWitness{packet.Inputs[0].TaprootKeySpendSig}
 		anchorIndex := -1
@@ -559,7 +559,7 @@ func TestLiveRestore(t *testing.T) {
 		child := wire.NewMsgTx(3)
 		child.AddTxIn(&wire.TxIn{PreviousOutPoint: anchorPoint, Sequence: wire.MaxTxInSequenceNum})
 		child.AddTxIn(&wire.TxIn{PreviousOutPoint: feePoint, Sequence: wire.MaxTxInSequenceNum})
-		child.AddTxOut(wire.NewTxOut(feeOutput.Value-4000, feeScript))
+		child.AddTxOut(wire.NewTxOut(feeOutput.Value-fee, feeScript))
 		require.Positive(t, child.TxOut[0].Value)
 		prev := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{anchorPoint: parent.TxOut[anchorIndex], feePoint: feeOutput})
 		hash, err := txscript.CalcTaprootSignatureHash(txscript.NewTxSigHashes(child, prev), txscript.SigHashDefault, child, 1, prev)
@@ -569,6 +569,43 @@ func TestLiveRestore(t *testing.T) {
 		tweaked.Zero()
 		require.NoError(t, err)
 		child.TxIn[1].Witness = wire.TxWitness{sig.Serialize()}
+		return parent, child
+	}
+	var policy struct {
+		RelayFee float64 `json:"minrelaytxfee"`
+	}
+	rpc.must(t, "getmempoolinfo", nil, &policy)
+	require.GreaterOrEqual(t, policy.RelayFee, 0.00001, "fee test requires a real relay floor")
+	tinyFundingID, tinyPoint, tinyOutput := fundFees(1000)
+	tinyParent, tinyChild := packageFor(packets[0], tinyPoint, tinyOutput, 1)
+	var rejected struct {
+		Message string `json:"package_msg"`
+		Results map[string]struct {
+			Error string `json:"error"`
+		} `json:"tx-results"`
+	}
+	rpc.must(t, "submitpackage", []any{[]string{txHex(t, tinyParent), txHex(t, tinyChild)}}, &rejected)
+	require.NotEqual(t, "success", rejected.Message)
+	feeRejectionReason := ""
+	for _, result := range rejected.Results {
+		for _, reason := range []string{"min relay fee not met", "mempool min fee not met", "package feerate too low"} {
+			if strings.Contains(result.Error, reason) {
+				feeRejectionReason = result.Error
+			}
+		}
+	}
+	require.NotEmpty(t, feeRejectionReason, "underpriced package must fail specifically because of fee policy: %+v", rejected)
+	var mempool []string
+	rpc.must(t, "getrawmempool", nil, &mempool)
+	require.NotContains(t, mempool, tinyParent.TxID())
+	require.NotContains(t, mempool, tinyChild.TxID())
+	rpc.must(t, "gettxout", []any{bundle.CommitmentTxID, packets[0].UnsignedTx.TxIn[0].PreviousOutPoint.Index, true}, &ancestor)
+	require.NotEqual(t, "null", string(ancestor), "rejected package spent its commitment input")
+	rpc.must(t, "gettxout", []any{tinyPoint.Hash.String(), tinyPoint.Index, true}, &ancestor)
+	require.NotEqual(t, "null", string(ancestor), "rejected package spent the user fee input")
+	fundingID, feePoint, feeOutput := fundFees(100000)
+	for _, packet := range packets {
+		parent, child := packageFor(packet, feePoint, feeOutput, 4000)
 		var submitted struct {
 			Message string `json:"package_msg"`
 		}
@@ -616,7 +653,7 @@ func TestLiveRestore(t *testing.T) {
 	require.InDelta(t, float64(amount-2000)/1e8, payout.Value, 1e-9)
 	rpc.must(t, "gettxout", []any{replacement.Hash.String(), replacement.Index}, &ancestor)
 	require.Equal(t, "null", string(ancestor))
-	evidence := map[string]any{"arkd_round": true, "commitment_txid": bundle.CommitmentTxID, "replacement_outpoint": bundle.Replacement, "ciphertext_sha256": page.Records[0].Hash, "funding_txid": fundingID, "sweep_txid": sweep.TxID(), "received_sats": amount - 2000, "confirmed": true, "late_funding": true, "nostr_public_key": Public(nostr)}
+	evidence := map[string]any{"arkd_round": true, "commitment_txid": bundle.CommitmentTxID, "replacement_outpoint": bundle.Replacement, "ciphertext_sha256": page.Records[0].Hash, "funding_txid": fundingID, "sweep_txid": sweep.TxID(), "received_sats": amount - 2000, "confirmed": true, "late_funding": true, "nostr_public_key": Public(nostr), "tiny_fee_funding_txid": tinyFundingID, "tiny_fee_sats": 1, "underpriced_package_rejected": true, "fee_rejection_reason": feeRejectionReason, "rejected_package_inputs_unspent": true}
 	raw, err = json.Marshal(evidence)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Workdir, "live-evidence.json"), raw, 0600))
