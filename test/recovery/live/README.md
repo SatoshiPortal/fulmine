@@ -30,7 +30,7 @@ python3 -m unittest discover -s test/recovery/live -v
 | `bitcoin` | New Core-backed transaction fixture using the actual Go recovery module and Rust backup process | A captured/retrieved branch can be funded later and swept on Bitcoin after its timelock |
 | `live` | Isolated arkd, wallet service, Fulmine delegate, Rust backup, Go SDK and Bitcoin | A real delegated round completes, its acknowledged candidate is retrieved using the Bull-derived Nostr key after Arkade shutdown, and its replacement is funded later and swept |
 | `acceptance` | Strict step runner and evidence contract; live wallet/arkd adapter still required | A real delegated refresh survives service loss, seed-only restoration and user-funded exit |
-| `all` | Runs all three | Full success requires every suite, including a real acceptance adapter |
+| `all` | Runs `components`, `bitcoin`, and `acceptance` | Full success requires the separate wallet adapter; run `live` explicitly for the built-in delegated-round fixtures |
 
 **The Bitcoin fixture is not a delegated arkd round.** It constructs a small
 signed tree transaction and an ordinary Ark CSV exit contract, anchored in a
@@ -109,6 +109,29 @@ forfeit-submission evidence, plus an independent Arkade indexer query showing
 that the original VTXO remains unspent. This scenario does not claim an exit
 from the unacknowledged candidate.
 
+## Verified deployed release
+
+The final deployed Fulmine revision
+`e468816350bd38580fc433531fadee9a450e1dfe` and backup revision
+`665b053141c7a1c52d7c64fcab3c36cff42b591d` passed these isolated VM runs:
+
+- `d913d5cee87b41358e6960dac66a5549`: real delegated refresh, acknowledgement
+  before forfeits, Arkade/delegate shutdown, wallet-state deletion, Bull-derived
+  Nostr retrieval, later user funding, and a confirmed 19,000-sat sweep from the
+  refreshed 21,000-sat VTXO. Bitcoin rejected a correctly signed package offering
+  a 1-sat fee with `min relay fee not met, 1 < 277`; both inputs remained unspent.
+  After additional user funding, the adequately priced exit succeeded.
+- `2e1e7bb627c448399ea0db54f4e881aa`: the real backup process was killed before
+  refresh. The candidate was retained, the task failed without forfeits, and
+  repeated indexer queries observed the original VTXO unspent for 20 seconds.
+
+Each report verifies the four executable SHA-256 hashes against the release
+manifest. Temporary containers and volumes were removed; the permanent delegate
+remained active. The 1-sat rejection proves fee-policy enforcement, not that a
+1,000-sat funding UTXO can never cover an exit. These results do not establish
+automatic browser/mobile registration, recovery after expiry, reorg handling,
+or a Mutinynet exit.
+
 ## Reports and truthful failures
 
 Every run gets a fresh `test/recovery/live/artifacts/<run-id>/` directory containing:
@@ -164,12 +187,14 @@ has the `bull.recovery.run=<run-id>` label. Never use a blanket Docker prune.
 | Bare public key or publisher tries to fetch | Go/Rust HTTP integration |
 | Wrong decryption key or corrupted encrypted record | Go crypto tests |
 | Expired append grant, changed grant, quota exceeded | Rust tests |
-| Upload returns HTTP 503; delegate manager is reconstructed | Go durable-outbox test; durable commit followed by a lost response remains untested |
+| Upload returns HTTP 503; delegate manager is reconstructed | Go durable-outbox restart tests |
+| Backup commits an upload but its response is lost | `TestCommittedUploadLostResponse` against real Rust, including publisher restart and exact retry |
 | Invalid/missing branch signature, wrong amount | Go exporter tests |
 | New uploads arrive during pagination | Go/Rust HTTP integration |
 | No fee UTXO at capture or retrieval | Core-backed Bitcoin fixture |
 | Sweep before CSV maturity | Core-backed Bitcoin rejection |
+| Signed exit package offers too little fee | Live Core rejects a 1-sat package; inputs remain unspent, then adequate fees allow a confirmed exit |
 | Adapter uses old VTXO, online wallet, early funding, wrong destination or sponsor | Harness acceptance assertions and mutation tests |
-| Real backup outage before Fulmine forfeits | Still requires a live delegate adapter/scenario |
+| Real backup outage before Fulmine forfeits | Live backup-process kill, failed task without forfeits, original unspent across a 20-second observation |
 | Actual seed-only wallet import with Arkade unreachable | Still requires the live wallet adapter |
 | Expired/swept ancestor, reorg, fee exhaustion, interrupted unroll | Additional Bitcoin/live scenarios required |

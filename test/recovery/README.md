@@ -59,21 +59,32 @@ methods with controlled callbacks. These component results do not prove an actua
 offline delegated Arkade refresh, mobile restoration, a unilateral exit, disk or
 host power-loss durability, or availability beyond a VTXO's expiry.
 
-## Measured run
+## Measured deployed-release run
 
-Run `7e46af09e3f948c8802df7cee8c235d4` on September 14, 2026 completed successfully
-in 279.746 seconds, including upload and cleanup:
+Run `1152ecb375014ec8a31d735f2407eb3b` on September 14, 2026 completed successfully
+in 270.566 seconds, including upload and cleanup. Its manifest identifies
+Fulmine `e468816350bd38580fc433531fadee9a450e1dfe` and backup
+`665b053141c7a1c52d7c64fcab3c36cff42b591d`. Every uploaded binary hash matches
+the release manifest; the backup executable is the installed release binary.
 
-- All 21 required component and delegate-gate tests passed five repetitions.
+- All 27 required component and delegate-gate tests passed five repetitions.
 - The crash test recovered 60 acknowledged records across 40 backup process
   kills and 20 publisher restarts, with seed-derived decryption after publisher
   data deletion in each repetition.
-- `FuzzRecoveryRecord` reported 14,489 executions; `FuzzRecoveryEnvelope` reported
-  7,172. Each target ran for 30 seconds with two workers and a 100 ms minimization
+- New cases reject another valid same-grant envelope substituted into an outbox,
+  whole-outbox copies across intent/batch IDs, missing legacy candidate bindings,
+  corrupt saved envelopes and incomplete final pages. Historical exact retries
+  after grant expiry and legitimate empty owner snapshots still pass.
+- `FuzzRecoveryRecord` reported 18,868 executions; `FuzzRecoveryEnvelope` reported
+  8,733. Each target ran for 30 seconds with two workers and a 100 ms minimization
   budget. Both passed.
-- The local harness self-tests passed all 13 tests.
+- All 13 local harness self-tests passed ten repetitions after fixing a process
+  cleanup assertion that could race with child-process reaping.
 
-The private artifact directory for this run contains `report.json`, per-suite
-logs, and the hashes of every uploaded binary. This is bounded component evidence;
-the separate [live harness](live/README.md) exercises real delegated refresh and
-seed-only Bitcoin exits. It has its own fixtures, reports, and self-test command.
+The private artifact directory contains `report.json`, `build-manifest.json`,
+per-suite logs and binary hashes. Required tests must pass the specified number
+of times; skips do not count. Temporary remote test files were removed.
+The separate [live harness](live/README.md) used the same release's Fulmine,
+recovery client, recovery tests and backup binary for a real delegated refresh,
+seed-only Bitcoin exit, underpriced-package rejection and backup outage. Those
+scenarios have their own reports and do not activate automatic wallet delegation.
