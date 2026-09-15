@@ -112,21 +112,25 @@ forfeit-submission evidence, plus an independent Arkade indexer query showing
 that the original VTXO remains unspent. This scenario does not claim an exit
 from the unacknowledged candidate.
 
-## Verified deployed release
+## Verified isolated release
 
-The final deployed Fulmine revision
-`e468816350bd38580fc433531fadee9a450e1dfe` and backup revision
-`665b053141c7a1c52d7c64fcab3c36cff42b591d` passed these isolated VM runs:
+Fulmine revision `5c08aa5d4c946d639d9e0937790892690408ab09` and backup revision
+`140b236310e62b8bd4bc6ae27b7ff13cc27bb4d8` passed these isolated VM runs on
+2026-09-15, using the integrated `backup-server` binary behind nginx:
 
-- `d913d5cee87b41358e6960dac66a5549`: real delegated refresh, acknowledgement
+- `c4d9a8dadb9845b08b7168b8ba14915b`: real delegated refresh, acknowledgement
   before forfeits, Arkade/delegate shutdown, wallet-state deletion, Bull-derived
   Nostr retrieval, later user funding, and a confirmed 19,000-sat sweep from the
   refreshed 21,000-sat VTXO. Bitcoin rejected a correctly signed package offering
   a 1-sat fee with `min relay fee not met, 1 < 277`; both inputs remained unspent.
-  After additional user funding, the adequately priced exit succeeded.
-- `2e1e7bb627c448399ea0db54f4e881aa`: the real backup process was killed before
+  After additional user funding, the adequately priced exit succeeded. The
+  retained protected-attempt journal was finalized, with the exact acknowledged
+  ciphertext receipt and no quarantine reason.
+- `269ca1ee129142ab9ddc561e764f0d96`: the real backup process was killed before
   refresh. The candidate was retained, the task failed without forfeits, and
   repeated indexer queries observed the original VTXO unspent for 20 seconds.
+  The retained journal remained in `preparing` with an explicit quarantine
+  reason; no replacement was claimed complete.
 
 Each report verifies the four executable SHA-256 hashes against the release
 manifest. Temporary containers and volumes were removed; the permanent delegate
