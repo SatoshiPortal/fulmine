@@ -152,3 +152,28 @@ VTXO remains unspent. Restoration must check Bitcoin state and expiry. Backups d
 not extend expiry, eliminate delegate/operator collusion, or cover every incoming
 coin automatically. The user may supply exit fee funds after retrieving a branch;
 this extension provides no fee sponsorship.
+
+## Measured journal scan cost
+
+`BenchmarkProtectedAttemptHistory` measures authenticated warm-cache scans and
+uncontended durable writes. On the two-vCPU staging runner, five samples per
+operation produced:
+
+| Retained journals | Maximum scan | Maximum write |
+|---|---:|---:|
+| 100 small | 47.92 ms | 5.39 ms |
+| 1,000 small | 523.7 ms | 35.80 ms |
+| 1,000 totaling 31.03 MiB | 1.78 s | 28.91 ms |
+
+The large case pads valid PSBT metadata to approach the byte limit; it does not
+represent a measured distribution of real Ark branches. Scans remain linear in
+retained history. These results exclude task-database lookups, simultaneous
+requests, upload latency and time waiting for the manager lock. They do not
+establish that the complete pre-forfeit callback fits its eight-second budget
+under load. The 10,000-task-reference ceiling is not a throughput target.
+
+Run the benchmark on an isolated VM with `go test ./pkg/recovery -run '^$'
+-bench '^BenchmarkProtectedAttemptHistory$' -benchtime=5x -benchmem`. It creates
+and removes temporary publisher directories; no backup listener or Ark node is
+needed. The test fixture is written directly to avoid timing quadratic setup;
+ordinary new-attempt admission still verifies retained history.
