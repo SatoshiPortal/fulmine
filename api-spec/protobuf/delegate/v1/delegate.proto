@@ -38,6 +38,10 @@ message GetDelegateInfoResponse {
   string delegator_address = 3;
   // The delegate address for the service fee, if any
   string delegate_address = 4;
+  // Experimental recovery publisher identity; empty when disabled.
+  string recovery_publisher = 5;
+  // Configured experimental backup origin.
+  string recovery_origin = 6;
 }
 
 // DelegateRequest is the request message for Delegate rpc
@@ -51,6 +55,8 @@ message DelegateRequest {
   // Opt-in flag to instruct the delegate to not replace an existing delegate that includes at
   // least one VTXO included in this request
   bool reject_replace = 3;
+  // Experimental owner-signed recovery registration JSON (prototype protocol).
+  string recovery_registration = 4;
 }
 // DelegateResponse is the response message for Delegate rpc
 message DelegateResponse {}

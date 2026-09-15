@@ -60,15 +60,16 @@ func DelegateTaskStatusFromString(s string) (DelegateTaskStatus, error) {
 }
 
 type DelegateTask struct {
-	ID                string
-	Intent            Intent
-	ForfeitTxs        map[wire.OutPoint]string // forfeit transaction per input
-	Fee               uint64
-	DelegatePublicKey string
-	ScheduledAt       time.Time
-	Status            DelegateTaskStatus
-	FailReason        string // set only when task is failed
-	CommitmentTxid    string // set only when task is completed
+	ID                   string
+	RecoveryRegistration string // validated JSON, persisted atomically with the task
+	Intent               Intent
+	ForfeitTxs           map[wire.OutPoint]string // forfeit transaction per input
+	Fee                  uint64
+	DelegatePublicKey    string
+	ScheduledAt          time.Time
+	Status               DelegateTaskStatus
+	FailReason           string // set only when task is failed
+	CommitmentTxid       string // set only when task is completed
 }
 
 type PendingDelegateTask struct {
@@ -78,6 +79,7 @@ type PendingDelegateTask struct {
 
 type DelegateRepository interface {
 	Add(ctx context.Context, task DelegateTask) error
+	GetByIntentTxID(ctx context.Context, txid string) (*DelegateTask, error)
 	GetByID(ctx context.Context, id string) (*DelegateTask, error)
 	// return status == pending tasks
 	GetAllPending(ctx context.Context) ([]PendingDelegateTask, error)

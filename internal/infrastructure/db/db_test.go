@@ -1018,3 +1018,39 @@ func makeVHTLC() domain.Vhtlc {
 		Script: hex.EncodeToString(script),
 	}
 }
+
+func TestRecoveryRegistrationSurvivesRestart(t *testing.T) {
+	for _, backend := range []string{"sqlite", "badger"} {
+		t.Run(backend, func(t *testing.T) {
+			dir := t.TempDir()
+			config := db.ServiceConfig{DbType: backend, DbConfig: []any{dir}}
+			if backend == "badger" {
+				config.DbConfig = append(config.DbConfig, nil)
+			}
+			svc, err := db.NewService(config)
+			require.NoError(t, err)
+			task := testDelegateTask
+			task.RecoveryRegistration = `{"owner":"bound-owner","grant":"immutable"}`
+			require.NoError(t, svc.Delegate().Add(t.Context(), task))
+			changed := task
+			changed.RecoveryRegistration = `{"owner":"attacker"}`
+			require.Error(t, svc.Delegate().Add(t.Context(), changed))
+			svc.Close()
+			svc, err = db.NewService(config)
+			require.NoError(t, err)
+			defer svc.Close()
+			restored, err := svc.Delegate().GetByIntentTxID(t.Context(), task.Intent.Txid)
+			require.NoError(t, err)
+			require.NotNil(t, restored)
+			require.Equal(t, task.RecoveryRegistration, restored.RecoveryRegistration)
+			require.NoError(t, svc.Delegate().FailTasks(t.Context(), "uncertain round", task.ID))
+			terminal, err := svc.Delegate().GetByIntentTxID(t.Context(), task.Intent.Txid)
+			require.NoError(t, err)
+			require.Equal(t, domain.DelegateTaskStatusFailed, terminal.Status)
+			require.Equal(t, task.RecoveryRegistration, terminal.RecoveryRegistration)
+			missing, err := svc.Delegate().GetByIntentTxID(t.Context(), "absent")
+			require.NoError(t, err)
+			require.Nil(t, missing)
+		})
+	}
+}

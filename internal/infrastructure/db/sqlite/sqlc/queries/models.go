@@ -9,16 +9,17 @@ import (
 )
 
 type DelegateTask struct {
-	ID                 string
-	IntentTxid         string
-	IntentMessage      string
-	IntentProof        string
-	Fee                int64
-	DelegatorPublicKey string
-	ScheduledAt        int64
-	Status             int64
-	FailReason         sql.NullString
-	CommitmentTxid     sql.NullString
+	ID                   string
+	IntentTxid           string
+	IntentMessage        string
+	IntentProof          string
+	RecoveryRegistration string
+	Fee                  int64
+	DelegatorPublicKey   string
+	ScheduledAt          int64
+	Status               int64
+	FailReason           sql.NullString
+	CommitmentTxid       sql.NullString
 }
 
 type DelegateTaskInput struct {

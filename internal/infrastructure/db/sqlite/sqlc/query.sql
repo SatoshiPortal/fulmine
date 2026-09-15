@@ -27,7 +27,7 @@ SELECT * FROM subscribed_script;
 DELETE FROM subscribed_script WHERE script = ?;
 
 -- name: InsertDelegateTask :exec
-INSERT INTO delegate_task (id, intent_txid, intent_message, intent_proof, fee, delegator_public_key, scheduled_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO delegate_task (id, intent_txid, intent_message, intent_proof, recovery_registration, fee, delegator_public_key, scheduled_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: InsertDelegateTaskInput :exec
 INSERT INTO delegate_task_input (task_id, outpoint, forfeit_tx)
@@ -41,6 +41,7 @@ SELECT
     dt.intent_txid,
     dt.intent_message,
     dt.intent_proof,
+    dt.recovery_registration,
     dt.fee,
     dt.delegator_public_key,
     dt.scheduled_at,
@@ -89,6 +90,7 @@ SELECT
     dt.intent_txid,
     dt.intent_message,
     dt.intent_proof,
+    dt.recovery_registration,
     dt.fee,
     dt.delegator_public_key,
     dt.scheduled_at,
@@ -102,3 +104,5 @@ LEFT JOIN delegate_task_input dti ON dt.id = dti.task_id
 WHERE dt.status = ?
 ORDER BY dt.scheduled_at DESC
 LIMIT ? OFFSET ?;
+-- name: GetTaskIDByIntentTxID :one
+SELECT id FROM delegate_task WHERE intent_txid = ? ORDER BY scheduled_at DESC LIMIT 1;

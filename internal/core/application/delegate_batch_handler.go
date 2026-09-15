@@ -3,8 +3,11 @@ package application
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"github.com/ArkLabsHQ/fulmine/pkg/recovery"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -23,8 +26,9 @@ import (
 // Batch session handler of the delegate service
 type delegateBatchSessionHandler struct {
 	musig2BatchSessionHandler
-	delegate      *DelegateService
-	selectedTasks []registeredIntent
+	delegate        *DelegateService
+	selectedTasks   []registeredIntent
+	recoveryAttempt *recoveryAttempt
 }
 
 // BatchStarted event doesn't have to be handled by the delegate session
@@ -40,7 +44,17 @@ func (h *delegateBatchSessionHandler) OnBatchStarted(
 func (h *delegateBatchSessionHandler) OnBatchFinalized(
 	ctx context.Context, event client.BatchFinalizedEvent,
 ) error {
+	if h.delegate.recovery != nil {
+		a := h.recoveryAttempt
+		if a == nil || (a.phase != recoverySubmitted && a.phase != recoverySubmissionUnknown) ||
+			a.batchID != event.Id || a.txid != event.Txid || !slices.Equal(a.taskIDs, h.taskIDs()) {
+			return h.failRecovery(ctx, fmt.Errorf("finalized commitment does not match protected attempt"))
+		}
+	}
 	repo := h.delegate.svc.dbSvc.Delegate()
+	if err := repo.CompleteTasks(ctx, event.Txid, h.taskIDs()...); err != nil {
+		return err
+	}
 	taskIds := make([]string, 0, len(h.selectedTasks))
 	for _, selectedTask := range h.selectedTasks {
 		taskIds = append(taskIds, selectedTask.taskID)
@@ -49,13 +63,16 @@ func (h *delegateBatchSessionHandler) OnBatchFinalized(
 		h.delegate.intentsMtx.Unlock()
 	}
 
-	return repo.CompleteTasks(ctx, event.Txid, taskIds...)
+	return nil
 }
 
 // OnBatchFailed re-register the delegates that failed to join the batch
 func (h *delegateBatchSessionHandler) OnBatchFailed(
-	context.Context, client.BatchFailedEvent,
+	ctx context.Context, event client.BatchFailedEvent,
 ) error {
+	if h.delegate.recovery != nil && h.recoveryAttempt != nil {
+		return h.failRecovery(ctx, fmt.Errorf("protected batch failed; retained candidate requires reconciliation"))
+	}
 	for _, selectedTask := range h.selectedTasks {
 		if err := h.delegate.registerDelegate(selectedTask.taskID); err != nil {
 			log.WithError(err).Warnf("failed to re-register delegate %s", selectedTask.taskID)
@@ -70,17 +87,103 @@ func (h *delegateBatchSessionHandler) OnBatchFailed(
 func (h *delegateBatchSessionHandler) OnBatchFinalization(
 	ctx context.Context, event client.BatchFinalizationEvent, vtxoTree, connectorTree *tree.TxTree,
 ) error {
-	selectedTasksIds := make([]string, 0, len(h.selectedTasks))
-	for _, selectedTask := range h.selectedTasks {
-		selectedTasksIds = append(selectedTasksIds, selectedTask.taskID)
+	if h.delegate.recovery != nil {
+		return h.finalizeRecovery(ctx, event, func() (map[string]string, error) {
+			if connectorTree == nil || len(connectorTree.Leaves()) == 0 {
+				return nil, fmt.Errorf("protected batch has no connectors")
+			}
+			return h.backupBeforeForfeits(ctx, event, vtxoTree, h.taskIDs())
+		}, func() error { return h.submitForfeitTxs(ctx, connectorTree.Leaves(), h.taskIDs()) })
 	}
+	if connectorTree == nil {
+		return fmt.Errorf("batch has no connectors")
+	}
+	return h.submitForfeitTxs(ctx, connectorTree.Leaves(), h.taskIDs())
+}
 
-	if err := h.submitForfeitTxs(
-		ctx, connectorTree.Leaves(), selectedTasksIds,
-	); err != nil {
-		log.WithError(err).Warnf("failed to submit forfeit txs")
+type recoveryPhase uint8
+
+const (
+	recoveryPreparing recoveryPhase = iota
+	recoveryAcknowledged
+	recoverySubmissionUnknown
+	recoverySubmitted
+	recoveryFailed
+)
+
+type recoveryAttempt struct {
+	batchID, txid, eventHash string
+	taskIDs                  []string
+	receipts                 map[string]string
+	phase                    recoveryPhase
+}
+
+func (h *delegateBatchSessionHandler) taskIDs() []string {
+	ids := make([]string, 0, len(h.selectedTasks))
+	for _, task := range h.selectedTasks {
+		ids = append(ids, task.taskID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func (h *delegateBatchSessionHandler) failRecovery(ctx context.Context, cause error) error {
+	if h.recoveryAttempt == nil {
+		h.recoveryAttempt = &recoveryAttempt{}
+	}
+	h.recoveryAttempt.phase = recoveryFailed
+	err := h.delegate.svc.dbSvc.Delegate().FailTasks(ctx, "protected attempt failed; reconcile retained recovery data", h.taskIDs()...)
+	return errors.Join(cause, err)
+}
+
+// The callbacks isolate I/O at the two irreversible boundaries. The attempt
+// authorizes only this candidate and never repeats an uncertain submission.
+func (h *delegateBatchSessionHandler) finalizeRecovery(ctx context.Context, event client.BatchFinalizationEvent,
+	backup func() (map[string]string, error), submit func() error,
+) error {
+	ids := h.taskIDs()
+	if a := h.recoveryAttempt; a != nil {
+		if a.phase == recoveryFailed {
+			return fmt.Errorf("protected attempt already failed")
+		}
+		if a.batchID != event.Id || a.eventHash != recovery.Hash([]byte(event.Tx)) || !slices.Equal(a.taskIDs, ids) {
+			return h.failRecovery(ctx, fmt.Errorf("protected candidate changed"))
+		}
+		if a.phase == recoverySubmitted {
+			return nil
+		}
+		return fmt.Errorf("protected submission outcome uncertain; await reconciliation")
+	}
+	h.recoveryAttempt = &recoveryAttempt{batchID: event.Id, eventHash: recovery.Hash([]byte(event.Tx)), taskIDs: ids}
+	a := h.recoveryAttempt
+	commit, err := psbt.NewFromRawBytes(strings.NewReader(event.Tx), true)
+	if err != nil || event.Id == "" || len(ids) == 0 {
+		return h.failRecovery(ctx, fmt.Errorf("invalid protected candidate"))
+	}
+	a.txid = commit.UnsignedTx.TxID()
+	receipts, err := backup()
+	if err != nil {
+		return h.failRecovery(ctx, err)
+	}
+	if len(receipts) != len(ids) {
+		return h.failRecovery(ctx, fmt.Errorf("incomplete backup acknowledgements"))
+	}
+	for _, id := range ids {
+		if len(receipts[id]) != 64 {
+			return h.failRecovery(ctx, fmt.Errorf("missing task acknowledgement"))
+		}
+	}
+	a.receipts = receipts
+	a.phase = recoveryAcknowledged
+	if err := ctx.Err(); err != nil {
+		return h.failRecovery(ctx, err)
+	}
+	a.phase = recoverySubmissionUnknown
+	log.WithFields(log.Fields{"batch": a.batchID, "commitment": a.txid}).Info("recovery forfeits submission starting")
+	if err := submit(); err != nil {
 		return err
 	}
+	a.phase = recoverySubmitted
 	return nil
 }
 
@@ -88,6 +191,9 @@ func (h *delegateBatchSessionHandler) submitForfeitTxs(
 	ctx context.Context, connectorsLeaves []*psbt.Packet, selectedTasksIds []string,
 ) error {
 	if len(connectorsLeaves) == 0 {
+		if h.delegate.recovery != nil {
+			return fmt.Errorf("protected batch has no connectors")
+		}
 		return nil
 	}
 	if len(selectedTasksIds) == 0 {
@@ -114,17 +220,29 @@ func (h *delegateBatchSessionHandler) submitForfeitTxs(
 
 		vtxos, err := h.delegate.svc.Indexer().GetVtxos(ctx, indexer.WithOutpoints(outpoints))
 		if err != nil {
+			if h.delegate.recovery != nil {
+				return fmt.Errorf("protected input lookup failed")
+			}
 			log.WithError(err).Warnf("failed to get vtxos for task %s", selectedTaskId)
 			continue
+		}
+		if h.delegate.recovery != nil && len(vtxos.Vtxos) != len(outpoints) {
+			return fmt.Errorf("protected input lookup incomplete")
 		}
 
 		for _, vtxo := range vtxos.Vtxos {
 			if vtxo.IsRecoverable() {
+				if h.delegate.recovery != nil {
+					return fmt.Errorf("protected input became recoverable")
+				}
 				continue // skip recoverable vtxo
 			}
 
 			outpoint, err := wire.NewOutPointFromString(vtxo.Outpoint.String())
 			if err != nil {
+				if h.delegate.recovery != nil {
+					return err
+				}
 				log.WithError(err).Warnf(
 					"failed to parse outpoint for vtxo %s:%d", vtxo.Txid, vtxo.VOut,
 				)
@@ -133,6 +251,9 @@ func (h *delegateBatchSessionHandler) submitForfeitTxs(
 
 			forfeitTxStr, ok := task.ForfeitTxs[*outpoint]
 			if !ok {
+				if h.delegate.recovery != nil {
+					return fmt.Errorf("protected input has no forfeit")
+				}
 				continue
 			}
 			forfeitPtx, err := psbt.NewFromRawBytes(strings.NewReader(forfeitTxStr), true)

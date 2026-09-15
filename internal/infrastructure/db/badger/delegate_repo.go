@@ -69,6 +69,23 @@ func (r *delegateRepository) GetByID(ctx context.Context, id string) (*domain.De
 	return data.toDelegateTask()
 }
 
+func (r *delegateRepository) GetByIntentTxID(ctx context.Context, txid string) (*domain.DelegateTask, error) {
+	var tasks []delegateTaskDTO
+	if err := r.store.Find(&tasks, nil); err != nil {
+		return nil, err
+	}
+	for _, data := range tasks {
+		task, err := data.toDelegateTask()
+		if err != nil {
+			return nil, err
+		}
+		if task.Intent.Txid == txid {
+			return task, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *delegateRepository) GetAllPending(ctx context.Context) ([]domain.PendingDelegateTask, error) {
 	var allTasks []delegateTaskDTO
 	var err error
@@ -334,16 +351,17 @@ type outpointJSON struct {
 }
 
 type delegateTaskDTO struct {
-	ID                string
-	IntentJSON        string
-	InputJSON         string
-	ForfeitTxsJSON    string // JSON map of outpoint -> forfeit_tx
-	Fee               uint64
-	DelegatePublicKey string
-	ScheduledAt       int64
-	Status            domain.DelegateTaskStatus
-	FailReason        string
-	CommitmentTxid    string
+	ID                   string
+	RecoveryRegistration string
+	IntentJSON           string
+	InputJSON            string
+	ForfeitTxsJSON       string // JSON map of outpoint -> forfeit_tx
+	Fee                  uint64
+	DelegatePublicKey    string
+	ScheduledAt          int64
+	Status               domain.DelegateTaskStatus
+	FailReason           string
+	CommitmentTxid       string
 }
 
 func (d *delegateTaskDTO) toDelegateTask() (*domain.DelegateTask, error) {
@@ -405,15 +423,16 @@ func (d *delegateTaskDTO) toDelegateTask() (*domain.DelegateTask, error) {
 	}
 
 	return &domain.DelegateTask{
-		ID:                d.ID,
-		Intent:            intent,
-		ForfeitTxs:        forfeitTxs,
-		Fee:               d.Fee,
-		DelegatePublicKey: d.DelegatePublicKey,
-		ScheduledAt:       time.Unix(d.ScheduledAt, 0),
-		Status:            d.Status,
-		FailReason:        d.FailReason,
-		CommitmentTxid:    d.CommitmentTxid,
+		ID:                   d.ID,
+		RecoveryRegistration: d.RecoveryRegistration,
+		Intent:               intent,
+		ForfeitTxs:           forfeitTxs,
+		Fee:                  d.Fee,
+		DelegatePublicKey:    d.DelegatePublicKey,
+		ScheduledAt:          time.Unix(d.ScheduledAt, 0),
+		Status:               d.Status,
+		FailReason:           d.FailReason,
+		CommitmentTxid:       d.CommitmentTxid,
 	}, nil
 }
 
@@ -437,15 +456,16 @@ func toDelegateTaskData(task domain.DelegateTask) delegateTaskDTO {
 	forfeitTxsJSONBytes, _ := json.Marshal(forfeitTxsJSON)
 
 	return delegateTaskDTO{
-		ID:                task.ID,
-		IntentJSON:        string(intentJSON),
-		InputJSON:         string(inputJSON),
-		ForfeitTxsJSON:    string(forfeitTxsJSONBytes),
-		Fee:               task.Fee,
-		DelegatePublicKey: task.DelegatePublicKey,
-		ScheduledAt:       task.ScheduledAt.Unix(),
-		Status:            task.Status,
-		FailReason:        task.FailReason,
-		CommitmentTxid:    task.CommitmentTxid,
+		ID:                   task.ID,
+		RecoveryRegistration: task.RecoveryRegistration,
+		IntentJSON:           string(intentJSON),
+		InputJSON:            string(inputJSON),
+		ForfeitTxsJSON:       string(forfeitTxsJSONBytes),
+		Fee:                  task.Fee,
+		DelegatePublicKey:    task.DelegatePublicKey,
+		ScheduledAt:          task.ScheduledAt.Unix(),
+		Status:               task.Status,
+		FailReason:           task.FailReason,
+		CommitmentTxid:       task.CommitmentTxid,
 	}
 }

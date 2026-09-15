@@ -29,10 +29,12 @@ func (h *delegateHandler) GetDelegateInfo(
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &delegatev1.GetDelegateInfoResponse{
-		Pubkey:           info.PubKey,
-		Fee:              strconv.FormatUint(info.Fee, 10), // TODO: use CEL?
-		DelegatorAddress: info.Address,
-		DelegateAddress:  info.Address,
+		Pubkey:            info.PubKey,
+		Fee:               strconv.FormatUint(info.Fee, 10), // TODO: use CEL?
+		DelegatorAddress:  info.Address,
+		DelegateAddress:   info.Address,
+		RecoveryPublisher: info.RecoveryPublisher,
+		RecoveryOrigin:    info.RecoveryOrigin,
 	}, nil
 }
 
@@ -65,7 +67,7 @@ func (h *delegateHandler) Delegate(
 	intentProof := intent.Proof{Packet: *proofPtx}
 
 	allowReplace := !req.GetRejectReplace()
-	err = h.svc.Delegate(ctx, intentMessage, intentProof, forfeitTxs, allowReplace)
+	err = h.svc.Delegate(ctx, intentMessage, intentProof, forfeitTxs, allowReplace, req.GetRecoveryRegistration())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

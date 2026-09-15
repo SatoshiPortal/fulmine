@@ -74,6 +74,7 @@ SELECT
     dt.intent_txid,
     dt.intent_message,
     dt.intent_proof,
+    dt.recovery_registration,
     dt.fee,
     dt.delegator_public_key,
     dt.scheduled_at,
@@ -88,18 +89,19 @@ WHERE dt.id = ?
 `
 
 type GetDelegateTaskRow struct {
-	ID                 string
-	IntentTxid         string
-	IntentMessage      string
-	IntentProof        string
-	Fee                int64
-	DelegatorPublicKey string
-	ScheduledAt        int64
-	Status             int64
-	FailReason         sql.NullString
-	CommitmentTxid     sql.NullString
-	Outpoint           sql.NullString
-	ForfeitTx          sql.NullString
+	ID                   string
+	IntentTxid           string
+	IntentMessage        string
+	IntentProof          string
+	RecoveryRegistration string
+	Fee                  int64
+	DelegatorPublicKey   string
+	ScheduledAt          int64
+	Status               int64
+	FailReason           sql.NullString
+	CommitmentTxid       sql.NullString
+	Outpoint             sql.NullString
+	ForfeitTx            sql.NullString
 }
 
 func (q *Queries) GetDelegateTask(ctx context.Context, id string) ([]GetDelegateTaskRow, error) {
@@ -116,6 +118,7 @@ func (q *Queries) GetDelegateTask(ctx context.Context, id string) ([]GetDelegate
 			&i.IntentTxid,
 			&i.IntentMessage,
 			&i.IntentProof,
+			&i.RecoveryRegistration,
 			&i.Fee,
 			&i.DelegatorPublicKey,
 			&i.ScheduledAt,
@@ -231,6 +234,17 @@ func (q *Queries) GetSubscribedScript(ctx context.Context, script string) (strin
 	return script, err
 }
 
+const getTaskIDByIntentTxID = `-- name: GetTaskIDByIntentTxID :one
+SELECT id FROM delegate_task WHERE intent_txid = ? ORDER BY scheduled_at DESC LIMIT 1
+`
+
+func (q *Queries) GetTaskIDByIntentTxID(ctx context.Context, intentTxid string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTaskIDByIntentTxID, intentTxid)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getVHTLC = `-- name: GetVHTLC :one
 SELECT id, script FROM vhtlc WHERE id = ?
 `
@@ -243,18 +257,19 @@ func (q *Queries) GetVHTLC(ctx context.Context, id string) (Vhtlc, error) {
 }
 
 const insertDelegateTask = `-- name: InsertDelegateTask :exec
-INSERT INTO delegate_task (id, intent_txid, intent_message, intent_proof, fee, delegator_public_key, scheduled_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO delegate_task (id, intent_txid, intent_message, intent_proof, recovery_registration, fee, delegator_public_key, scheduled_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertDelegateTaskParams struct {
-	ID                 string
-	IntentTxid         string
-	IntentMessage      string
-	IntentProof        string
-	Fee                int64
-	DelegatorPublicKey string
-	ScheduledAt        int64
-	Status             int64
+	ID                   string
+	IntentTxid           string
+	IntentMessage        string
+	IntentProof          string
+	RecoveryRegistration string
+	Fee                  int64
+	DelegatorPublicKey   string
+	ScheduledAt          int64
+	Status               int64
 }
 
 func (q *Queries) InsertDelegateTask(ctx context.Context, arg InsertDelegateTaskParams) error {
@@ -263,6 +278,7 @@ func (q *Queries) InsertDelegateTask(ctx context.Context, arg InsertDelegateTask
 		arg.IntentTxid,
 		arg.IntentMessage,
 		arg.IntentProof,
+		arg.RecoveryRegistration,
 		arg.Fee,
 		arg.DelegatorPublicKey,
 		arg.ScheduledAt,
@@ -353,6 +369,7 @@ SELECT
     dt.intent_txid,
     dt.intent_message,
     dt.intent_proof,
+    dt.recovery_registration,
     dt.fee,
     dt.delegator_public_key,
     dt.scheduled_at,
@@ -375,18 +392,19 @@ type ListDelegateTasksParams struct {
 }
 
 type ListDelegateTasksRow struct {
-	ID                 string
-	IntentTxid         string
-	IntentMessage      string
-	IntentProof        string
-	Fee                int64
-	DelegatorPublicKey string
-	ScheduledAt        int64
-	Status             int64
-	FailReason         sql.NullString
-	CommitmentTxid     sql.NullString
-	Outpoint           sql.NullString
-	ForfeitTx          sql.NullString
+	ID                   string
+	IntentTxid           string
+	IntentMessage        string
+	IntentProof          string
+	RecoveryRegistration string
+	Fee                  int64
+	DelegatorPublicKey   string
+	ScheduledAt          int64
+	Status               int64
+	FailReason           sql.NullString
+	CommitmentTxid       sql.NullString
+	Outpoint             sql.NullString
+	ForfeitTx            sql.NullString
 }
 
 func (q *Queries) ListDelegateTasks(ctx context.Context, arg ListDelegateTasksParams) ([]ListDelegateTasksRow, error) {
@@ -403,6 +421,7 @@ func (q *Queries) ListDelegateTasks(ctx context.Context, arg ListDelegateTasksPa
 			&i.IntentTxid,
 			&i.IntentMessage,
 			&i.IntentProof,
+			&i.RecoveryRegistration,
 			&i.Fee,
 			&i.DelegatorPublicKey,
 			&i.ScheduledAt,

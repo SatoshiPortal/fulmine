@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ArkLabsHQ/fulmine/internal/core/domain"
+	"github.com/ArkLabsHQ/fulmine/pkg/recovery"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -34,8 +35,9 @@ import (
 const maxDelegateSchedulingWindow = 31 * 24 * time.Hour
 
 type DelegateService struct {
-	svc *Service
-	fee uint64
+	svc      *Service
+	fee      uint64
+	recovery *recovery.Manager
 
 	cachedDelegateAddress *arklib.Address
 	delegateAddrMtx       sync.Mutex
@@ -52,9 +54,11 @@ type DelegateService struct {
 }
 
 type delegateInfo struct {
-	PubKey  string
-	Fee     uint64
-	Address string
+	PubKey            string
+	Fee               uint64
+	Address           string
+	RecoveryPublisher string
+	RecoveryOrigin    string
 }
 
 func newDelegateService(svc *Service, fee uint64) *DelegateService {
@@ -84,11 +88,16 @@ func (s *DelegateService) GetInfo(ctx context.Context) (*delegateInfo, error) {
 		return nil, err
 	}
 
-	return &delegateInfo{
+	info := &delegateInfo{
 		PubKey:  hex.EncodeToString(s.svc.publicKey.SerializeCompressed()),
 		Fee:     s.fee,
 		Address: encodedAddr,
-	}, nil
+	}
+	if s.recovery != nil {
+		info.RecoveryPublisher = s.recovery.Public()
+		info.RecoveryOrigin = s.recovery.Origin()
+	}
+	return info, nil
 }
 
 // Delegate creates a delegate task, then schedules it for execution if valid
@@ -96,6 +105,7 @@ func (s *DelegateService) Delegate(
 	ctx context.Context,
 	intentMessage intent.RegisterMessage, intentProof intent.Proof, forfeitTxs []*psbt.Packet,
 	allowReplace bool,
+	registration string,
 ) error {
 	if err := s.svc.isInitializedAndUnlocked(ctx); err != nil {
 		return err
@@ -105,20 +115,24 @@ func (s *DelegateService) Delegate(
 	if err != nil {
 		return err
 	}
+	if err := s.validateRecovery(ctx, task, forfeitTxs, registration); err != nil {
+		return err
+	}
 
 	repo := s.svc.dbSvc.Delegate()
 
-	// check if we already have a pending task with the same intent txid
-	pendingTask, _ := repo.GetPendingTaskByIntentTxID(ctx, task.Intent.Txid)
-	if pendingTask != nil {
-		// duplicate task, no need to do anything
-		return nil
-	}
-
-	// lock to avoid a new task with overlapping inputs is created while we are adding it to
-	// database
 	s.delegateMtx.Lock()
 	defer s.delegateMtx.Unlock()
+	prior, err := repo.GetByIntentTxID(ctx, task.Intent.Txid)
+	if err != nil {
+		return err
+	}
+	if prior != nil {
+		if prior.Status != domain.DelegateTaskStatusPending || prior.RecoveryRegistration != task.RecoveryRegistration {
+			return fmt.Errorf("intent already exists with a different registration or terminal outcome")
+		}
+		return nil
+	}
 
 	// before saving to database, verify that there is no pending task with any overlapping input
 	pendingTaskIDs, err := repo.GetPendingTaskIDsByInputs(ctx, task.Intent.Inputs)
@@ -130,6 +144,19 @@ func (s *DelegateService) Delegate(
 			return fmt.Errorf("there is a pending task with overlapping inputs")
 		}
 
+		if s.recovery != nil {
+			s.intentsMtx.Lock()
+			active := false
+			for _, registered := range s.registeredIntents {
+				if slices.Contains(pendingTaskIDs, registered.taskID) {
+					active = true
+				}
+			}
+			s.intentsMtx.Unlock()
+			if active {
+				return fmt.Errorf("cannot replace a registered protected intent; reconcile its round first")
+			}
+		}
 		// cancel pending tasks with overlapping inputs
 		if err := repo.CancelTasks(ctx, pendingTaskIDs...); err != nil {
 			return fmt.Errorf("failed to cancel pending tasks: %w", err)
@@ -167,6 +194,14 @@ func (s *DelegateService) Start() {
 
 	go s.listenBatchStartedEvents(s.ctx)
 	go s.monitorVtxosSpent(s.ctx)
+}
+
+func (s *DelegateService) Close() error {
+	s.Stop()
+	if s.recovery != nil {
+		return s.recovery.Close()
+	}
+	return nil
 }
 
 func (s *DelegateService) Stop() {
@@ -493,15 +528,33 @@ func (s *DelegateService) restorePendingTasks() error {
 func (s *DelegateService) registerDelegate(id string) error {
 	repo := s.svc.dbSvc.Delegate()
 	s.delegateMtx.Lock()
+	defer s.delegateMtx.Unlock()
 	task, err := repo.GetByID(s.ctx, id)
 	if err != nil {
-		s.delegateMtx.Unlock()
 		return err
 	}
-	s.delegateMtx.Unlock()
 	if task.Status != domain.DelegateTaskStatusPending {
 		// task is not pending, it has been cancelled by another task
 		return nil
+	}
+	if s.recovery != nil {
+		cfg, err := s.svc.GetConfigData(s.ctx)
+		if err != nil {
+			return err
+		}
+		if cfg.Network.Name != "regtest" {
+			return fmt.Errorf("recovery prototype supports regtest only")
+		}
+		r, err := recovery.ParseRegistration(task.RecoveryRegistration)
+		if err != nil {
+			return fmt.Errorf("task has no recovery registration")
+		}
+		if err = r.Grant.Validate(s.recovery.Origin(), s.recovery.Public(), uint64(time.Now().Unix())); err != nil {
+			return err
+		}
+		if err = s.recoveryInputs(s.ctx, task); err != nil {
+			return err
+		}
 	}
 
 	intentId, err := s.svc.Client().RegisterIntent(s.ctx, task.Intent.Proof, task.Intent.Message)
@@ -713,11 +766,17 @@ func (s *DelegateService) joinDelegateBatch(
 				}
 			case client.BatchFinalizationEvent:
 				if len(flatConnectorTree) == 0 {
+					if s.recovery != nil {
+						return "", handler.failRecovery(ctx, fmt.Errorf("protected batch has no connectors"))
+					}
 					continue
 				}
 				connectorTree, err = tree.NewTxTree(flatConnectorTree)
 				if err != nil {
 					log.WithError(err).Warnf("failed to create connector tree")
+					if s.recovery != nil {
+						return "", handler.failRecovery(ctx, err)
+					}
 					continue
 				}
 

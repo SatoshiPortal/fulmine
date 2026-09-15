@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS delegate_task (
     intent_txid TEXT NOT NULL,
     intent_message TEXT NOT NULL,
     intent_proof TEXT NOT NULL,
+    recovery_registration TEXT NOT NULL DEFAULT '',
     fee INTEGER NOT NULL,
     delegator_public_key TEXT NOT NULL,
     scheduled_at INTEGER NOT NULL,

@@ -142,6 +142,10 @@
         "rejectReplace": {
           "type": "boolean",
           "title": "Opt-in flag to instruct the delegate to not replace an existing delegate that includes at\nleast one VTXO included in this request"
+        },
+        "recoveryRegistration": {
+          "type": "string",
+          "description": "Experimental owner-signed recovery registration JSON (prototype protocol)."
         }
       },
       "title": "DelegateRequest is the request message for Delegate rpc"
@@ -168,6 +172,14 @@
         "delegateAddress": {
           "type": "string",
           "title": "The delegate address for the service fee, if any"
+        },
+        "recoveryPublisher": {
+          "type": "string",
+          "description": "Experimental recovery publisher identity; empty when disabled."
+        },
+        "recoveryOrigin": {
+          "type": "string",
+          "description": "Configured experimental backup origin."
         }
       },
       "title": "GetDelegateInfoResponse is the response message for GetDelegateInfo rpc"

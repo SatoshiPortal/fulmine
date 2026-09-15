@@ -32,14 +32,15 @@ func NewDelegateRepository(db *sql.DB) (domain.DelegateRepository, error) {
 func (r *delegateRepository) Add(ctx context.Context, task domain.DelegateTask) error {
 	txBody := func(querierWithTx *queries.Queries) error {
 		if err := querierWithTx.InsertDelegateTask(ctx, queries.InsertDelegateTaskParams{
-			ID:                 task.ID,
-			IntentTxid:         task.Intent.Txid,
-			IntentMessage:      task.Intent.Message,
-			IntentProof:        task.Intent.Proof,
-			Fee:                int64(task.Fee),
-			DelegatorPublicKey: task.DelegatePublicKey,
-			ScheduledAt:        task.ScheduledAt.Unix(),
-			Status:             int64(task.Status),
+			ID:                   task.ID,
+			IntentTxid:           task.Intent.Txid,
+			IntentMessage:        task.Intent.Message,
+			IntentProof:          task.Intent.Proof,
+			RecoveryRegistration: task.RecoveryRegistration,
+			Fee:                  int64(task.Fee),
+			DelegatorPublicKey:   task.DelegatePublicKey,
+			ScheduledAt:          task.ScheduledAt.Unix(),
+			Status:               int64(task.Status),
 		}); err != nil {
 			sqlErr, ok := err.(*sqlite.Error)
 			if ok && sqlErr.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY {
@@ -101,16 +102,28 @@ func (r *delegateRepository) GetByID(ctx context.Context, id string) (*domain.De
 	}
 
 	return &domain.DelegateTask{
-		ID:                firstRow.ID,
-		Intent:            intent,
-		ForfeitTxs:        forfeitTxs,
-		Fee:               uint64(firstRow.Fee),
-		DelegatePublicKey: firstRow.DelegatorPublicKey,
-		ScheduledAt:       time.Unix(firstRow.ScheduledAt, 0),
-		Status:            domain.DelegateTaskStatus(firstRow.Status),
-		FailReason:        firstRow.FailReason.String,
-		CommitmentTxid:    firstRow.CommitmentTxid.String,
+		ID:                   firstRow.ID,
+		RecoveryRegistration: firstRow.RecoveryRegistration,
+		Intent:               intent,
+		ForfeitTxs:           forfeitTxs,
+		Fee:                  uint64(firstRow.Fee),
+		DelegatePublicKey:    firstRow.DelegatorPublicKey,
+		ScheduledAt:          time.Unix(firstRow.ScheduledAt, 0),
+		Status:               domain.DelegateTaskStatus(firstRow.Status),
+		FailReason:           firstRow.FailReason.String,
+		CommitmentTxid:       firstRow.CommitmentTxid.String,
 	}, nil
+}
+
+func (r *delegateRepository) GetByIntentTxID(ctx context.Context, txid string) (*domain.DelegateTask, error) {
+	id, err := r.querier.GetTaskIDByIntentTxID(ctx, txid)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r.GetByID(ctx, id)
 }
 
 func (r *delegateRepository) GetAllPending(ctx context.Context) ([]domain.PendingDelegateTask, error) {
@@ -196,15 +209,16 @@ func (r *delegateRepository) GetAll(ctx context.Context, status domain.DelegateT
 			}
 
 			task = &domain.DelegateTask{
-				ID:                row.ID,
-				Intent:            intent,
-				ForfeitTxs:        forfeitTxs,
-				Fee:               uint64(row.Fee),
-				DelegatePublicKey: row.DelegatorPublicKey,
-				ScheduledAt:       time.Unix(row.ScheduledAt, 0),
-				Status:            domain.DelegateTaskStatus(row.Status),
-				FailReason:        row.FailReason.String,
-				CommitmentTxid:    row.CommitmentTxid.String,
+				ID:                   row.ID,
+				RecoveryRegistration: row.RecoveryRegistration,
+				Intent:               intent,
+				ForfeitTxs:           forfeitTxs,
+				Fee:                  uint64(row.Fee),
+				DelegatePublicKey:    row.DelegatorPublicKey,
+				ScheduledAt:          time.Unix(row.ScheduledAt, 0),
+				Status:               domain.DelegateTaskStatus(row.Status),
+				FailReason:           row.FailReason.String,
+				CommitmentTxid:       row.CommitmentTxid.String,
 			}
 			taskMap[row.ID] = task
 			taskOrder = append(taskOrder, row.ID)

@@ -362,6 +362,11 @@ func (s *service) Stop() {
 		log.Info("stopped Delegate server")
 	}
 
+	if s.delegateSvc != nil {
+		if err := s.delegateSvc.Close(); err != nil {
+			log.WithError(err).Warn("failed to close recovery publisher")
+		}
+	}
 	if s.pyroscopeShutdown != nil {
 		s.pyroscopeShutdown()
 	}

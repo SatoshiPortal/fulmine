@@ -134,6 +134,9 @@ func NewServices(
 
 	if delegateConfig.Enabled {
 		delegateSvc := newDelegateService(svc, delegateConfig.Fee)
+		if err := delegateSvc.configureRecovery(datadir); err != nil {
+			return nil, nil, err
+		}
 		svc.onUnlock = func() {
 			delegateSvc.Start()
 		}
@@ -1153,15 +1156,15 @@ func (s *Service) getVHTLCKeyIndex(ctx context.Context, script string) (uint64, 
 
 	handler, err := s.Wallet.ContractManager().GetHandler(ctx, contract)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get contract handler for vhtlc %s: %w", err)
+		return 0, fmt.Errorf("failed to get contract handler for vhtlc %s: %w", script, err)
 	}
 	keyRef, err := handler.GetKeyRef(contract)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get key ref for vhtlc %s: %w", err)
+		return 0, fmt.Errorf("failed to get key ref for vhtlc %s: %w", script, err)
 	}
 	keyIndex, err := identity.GetKeyIndex(ctx, keyRef.Id)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get key index for vhtlc %s: %w", err)
+		return 0, fmt.Errorf("failed to get key index for vhtlc %s: %w", script, err)
 	}
 	return uint64(keyIndex), nil
 }
