@@ -44,9 +44,23 @@ go test -race ./pkg/recovery ./internal/core/application ./internal/infrastructu
 Tests requiring the companion server, Bitcoin Core, or a live Arkade environment
 skip unless their fixture configuration is supplied. A skipped test is not
 evidence of successful recovery. The regtest Bitcoin fixture exercises later fee
-funding and a confirmed CSV sweep. Full delegated refresh followed by seed-only
-restoration and unilateral exit has not yet passed the live acceptance harness.
-Mutinynet deployment and network-boundary tests do not establish that guarantee.
+funding and a confirmed CSV sweep.
+
+The isolated live harness has also completed two real arkd/Fulmine refreshes:
+the SDK preparation process exits before delegation, the acknowledged candidate
+matches the completed task, and acknowledgement precedes forfeit submission.
+After stopping Arkade, its indexers and the delegate and erasing wallet state,
+a new process derives the Bull recovery Nostr key from the seed, retrieves and
+validates the branch, receives fee funding afterward, and confirms the replacement
+unroll and CSV sweep on Bitcoin. Each run swept 19,000 sats from a 21,000-sat VTXO.
+A separate live backup-process failure scenario checks that no forfeits are
+submitted and that Arkade still reports the original VTXO as unspent.
+
+These fixtures use a public test mnemonic on a fresh regtest chain. They do not
+establish automatic web/mobile wallet registration, production readiness, or a
+Mutinynet end-to-end exit. `TestLiveBullNostrDerivation` checks the BIP85/HKDF
+recovery identity against the browser fixture. `TestLivePrepare`,
+`TestLiveRestore`, and `TestLiveOriginalUnspent` require the owned live stack.
 
 A stored record is a candidate, not proof that its commitment confirmed or its
 VTXO remains unspent. Restoration must check Bitcoin state and expiry. Backups do

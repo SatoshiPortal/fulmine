@@ -3,8 +3,12 @@ package recovery
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +24,8 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	indexergrpc "github.com/arkade-os/arkd/pkg/client-lib/indexer/grpc"
 	clientTypes "github.com/arkade-os/arkd/pkg/client-lib/types"
 	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -32,6 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 	bip32 "github.com/tyler-smith/go-bip32"
 	bip39 "github.com/tyler-smith/go-bip39"
+	"golang.org/x/crypto/hkdf"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -40,6 +47,7 @@ import (
 type liveConfig struct {
 	Ark, Admin, Explorer, Delegate, Backup, Workdir, Bitcoin string
 	MiningAddress                                            string `json:"mining_address"`
+	PublicTestMnemonic                                       string `json:"public_test_mnemonic"`
 }
 
 func liveConfigFor(t *testing.T) liveConfig {
@@ -59,13 +67,49 @@ func liveNostrKey(t *testing.T, mnemonic string) *btcec.PrivateKey {
 	defer clear(seed)
 	key, err := bip32.NewMasterKey(seed)
 	require.NoError(t, err)
-	for _, child := range []uint32{0x8000002c, 0x800004d5, 0x80000000, 0, 0} {
+	for _, child := range []uint32{83696968 + 0x80000000, 1642 + 0x80000000, 0x80000000, 1 + 0x80000000} {
 		key, err = key.NewChildKey(child)
 		require.NoError(t, err)
 	}
-	private, _ := btcec.PrivKeyFromBytes(key.Key)
-	return private
+	mac := hmac.New(sha512.New, []byte("bip-entropy-from-k"))
+	_, err = mac.Write(key.Key)
+	require.NoError(t, err)
+	entropy := mac.Sum(nil)
+	defer clear(entropy)
+	credential := make([]byte, 16)
+	_, err = io.ReadFull(hkdf.New(sha256.New, entropy, []byte("bullbitcoin-backup-password"), []byte("mnemonic-v1")), credential)
+	require.NoError(t, err)
+	defer clear(credential)
+	root := make([]byte, 32)
+	_, err = io.ReadFull(hkdf.New(sha256.New, credential, []byte("bullbitcoin-backup-password"), []byte("encryption-v1")), root)
+	require.NoError(t, err)
+	defer clear(root)
+	for counter := 0; counter < 256; counter++ {
+		h := hmac.New(sha256.New, root)
+		_, err = h.Write(append([]byte("nostr-auth-v1"), 0, byte(counter)))
+		require.NoError(t, err)
+		candidate := h.Sum(nil)
+		var scalar btcec.ModNScalar
+		overflow := scalar.SetByteSlice(candidate)
+		if !overflow && !scalar.IsZero() {
+			private, _ := btcec.PrivKeyFromBytes(candidate)
+			clear(candidate)
+			scalar.Zero()
+			return private
+		}
+		clear(candidate)
+		scalar.Zero()
+	}
+	t.Fatal("no valid Nostr scalar")
+	return nil
 }
+
+func TestLiveBullNostrDerivation(t *testing.T) {
+	key := liveNostrKey(t, "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+	defer key.Zero()
+	require.Equal(t, "5aaf0e2e3052791f7ad96eaf656e7f7cd94ee3039522407d48e5decf0beec6a9", Public(key))
+}
+
 func TestLivePrepare(t *testing.T) {
 	cfg := liveConfigFor(t)
 	ctx := t.Context()
@@ -74,6 +118,10 @@ func TestLivePrepare(t *testing.T) {
 	mnemonic, err := bip39.NewMnemonic(entropy)
 	require.NoError(t, err)
 	clear(entropy)
+	if cfg.PublicTestMnemonic != "" {
+		require.True(t, bip39.IsMnemonicValid(cfg.PublicTestMnemonic))
+		mnemonic = cfg.PublicTestMnemonic
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Workdir, "seed"), []byte(mnemonic), 0600))
 	alice, err := arksdk.NewWallet(filepath.Join(cfg.Workdir, "wallet"))
 	require.NoError(t, err)
@@ -114,6 +162,8 @@ func TestLivePrepare(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, delegatePubKey)
 
+	_, err = alice.NewOffchainAddress(ctx)
+	require.NoError(t, err)
 	_, aliceAddr, _, _, err := alice.GetAddresses(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, aliceAddr)
@@ -371,7 +421,7 @@ func TestLivePrepare(t *testing.T) {
 	raw, err := protojson.Marshal(req)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Workdir, "protected-request.json"), raw, 0600))
-	raw, err = json.Marshal(map[string]any{"original_outpoint": aliceVtxo.Outpoint.String(), "nostr_public_key": Public(nostr), "wallet_identity": "go-sdk HD BIP86", "nostr_path": "m/44'/1237'/0'/0/0"})
+	raw, err = json.Marshal(map[string]any{"original_outpoint": aliceVtxo.Outpoint.String(), "nostr_public_key": Public(nostr), "wallet_identity": "go-sdk HD BIP86", "nostr_derivation": "Bull BIP85 1642/0/1, mnemonic-v1, encryption-v1, nostr-auth-v1"})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Workdir, "prepare-evidence.json"), raw, 0600))
 }
@@ -389,6 +439,9 @@ func TestLiveRestore(t *testing.T) {
 	page, err := FetchPage(t.Context(), cfg.Backup, nostr, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, page.Records, 1)
+	record, err := json.Marshal(page.Records[0])
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Workdir, "restored-record.json"), record, 0600))
 	plaintext, err := Open(page.Records[0], nostr)
 	require.NoError(t, err)
 	defer clear(plaintext)
@@ -567,6 +620,33 @@ func TestLiveRestore(t *testing.T) {
 	raw, err = json.Marshal(evidence)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Workdir, "live-evidence.json"), raw, 0600))
+}
+
+func TestLiveOriginalUnspent(t *testing.T) {
+	cfg := liveConfigFor(t)
+	raw, err := os.ReadFile(filepath.Join(cfg.Workdir, "prepare-evidence.json"))
+	require.NoError(t, err)
+	var prepared struct {
+		Original string `json:"original_outpoint"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &prepared))
+	point, err := wire.NewOutPointFromString(prepared.Original)
+	require.NoError(t, err)
+	client, err := indexergrpc.NewClient(cfg.Ark)
+	require.NoError(t, err)
+	defer client.Close()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		result, err := client.GetVtxos(t.Context(), indexer.WithOutpoints([]clientTypes.Outpoint{{Txid: point.Hash.String(), VOut: point.Index}}))
+		require.NoError(t, err)
+		require.Len(t, result.Vtxos, 1)
+		require.False(t, result.Vtxos[0].Spent, "backup outage must not forfeit the original input")
+		require.False(t, result.Vtxos[0].Unrolled)
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func TestLiveWalletReady(t *testing.T) {
