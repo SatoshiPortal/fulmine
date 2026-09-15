@@ -193,8 +193,14 @@ func ParseRegistration(raw string) (Registration, error) {
 }
 
 type outbox struct {
-	Request       StoreRequest `json:"request"`
-	PlaintextHash string       `json:"plaintext_hash"`
+	Request          StoreRequest `json:"request"`
+	PlaintextHash    string       `json:"plaintext_hash"`
+	BindingSignature string       `json:"binding_signature"`
+}
+
+func (b outbox) bindingDigest(intentID, batchID string) []byte {
+	return Digest(Domain, "outbox-binding-v1", intentID, batchID,
+		hex.EncodeToString(b.Request.Grant.Digest()), b.PlaintextHash, b.Request.Hash)
 }
 
 // Deliver returns only after the backup acknowledges the exact ciphertext hash
@@ -220,6 +226,10 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 			return Receipt{}, e
 		}
 		box = outbox{Request: req, PlaintextHash: Hash(plain)}
+		box.BindingSignature, err = Sign(m.key, box.bindingDigest(intentID, batchID))
+		if err != nil {
+			return Receipt{}, err
+		}
 		if err = saveBox(path, box); err != nil {
 			return Receipt{}, err
 		}
@@ -230,6 +240,12 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 	}
 	if !bytes.Equal(box.Request.Grant.Digest(), r.Grant.Digest()) || box.PlaintextHash != Hash(plain) {
 		return Receipt{}, errors.New("batch recovery data changed after sealing")
+	}
+	if box.BindingSignature == "" {
+		return Receipt{}, errors.New("legacy outbox has no candidate binding; retained file requires reconciliation")
+	}
+	if err = Verify(m.Public(), box.bindingDigest(intentID, batchID), box.BindingSignature); err != nil {
+		return Receipt{}, fmt.Errorf("invalid saved outbox candidate binding: %w", err)
 	}
 	if box.Request.Grant.Origin != m.origin || box.Request.Grant.Publisher != m.Public() {
 		return Receipt{}, errors.New("saved outbox publisher or origin mismatch")

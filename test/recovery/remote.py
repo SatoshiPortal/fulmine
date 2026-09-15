@@ -22,6 +22,7 @@ REQUIRED = {
     "TestEnvelopeAuthenticatedBadCiphertext", "TestBranchAdversarialMatrix",
     "TestFetchResumeAndLocalIntegrity", "TestFetchRejectsMalformedPages",
     "TestFetchRequiresCompletePageSchema", "TestRetryAuthenticatesSavedEnvelope",
+    "TestOutboxBindingRejectsValidEnvelopeSubstitution",
     "TestFetchOriginPolicy",
     "TestHardeningReviewHistoricalRetryAndEmptyOwner", "TestHardeningReviewIncompleteFinalPageResumes",
     "TestBackupCrashAndSeedRecovery",

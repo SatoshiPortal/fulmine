@@ -19,6 +19,13 @@ The publisher key and immutable encrypted outbox live under
 `<FULMINE_DATADIR>/recovery-prototype/`. One process owns that directory. Retain it
 across restarts, and use separate data directories for different networks.
 Legacy registration sidecars are rejected rather than silently migrated.
+Each new outbox carries a publisher signature binding its intent, batch, grant,
+plaintext hash and ciphertext hash. This prevents another valid envelope under
+the same grant from being substituted during a retry. Outboxes created before
+this binding was introduced fail closed on retry and remain untouched for
+reconciliation. Already uploaded records can still be fetched and decrypted;
+the delegate cannot safely authenticate their plaintext association retroactively
+because it does not retain the ephemeral encryption key.
 
 `go build ./cmd/recovery-client` builds the helper for generating test identities,
 signing registrations, and fetching/decrypting records with an existing Nostr key.

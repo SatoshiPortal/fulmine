@@ -31,7 +31,6 @@ func TestRetryAuthenticatesSavedEnvelope(t *testing.T) {
 			require.NoError(t, err)
 			registration := Registration{Grant: testGrant(t, testKey(t), manager.Public(), server.URL)}
 			require.NoError(t, manager.Deliver(t.Context(), "intent", "batch", registration, []byte("candidate")))
-			require.NoError(t, manager.Close())
 			path := filepath.Join(dir, fmt.Sprintf("outbox-%x.json", Digest("intent", "batch")))
 			raw, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -62,6 +61,9 @@ func TestRetryAuthenticatesSavedEnvelope(t *testing.T) {
 				box.Request.Hash = Hash(raw)
 				box.Request.Bytes = uint64(len(raw))
 			}
+			// A valid local binding must not bypass the independent envelope checks.
+			box.BindingSignature, err = Sign(manager.key, box.bindingDigest("intent", "batch"))
+			require.NoError(t, err)
 			require.NoError(t, saveBox(path, box))
 			if mode == "oversized_outbox" {
 				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
@@ -70,11 +72,15 @@ func TestRetryAuthenticatesSavedEnvelope(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, f.Close())
 			}
+			require.NoError(t, manager.Close())
 			manager, err = NewManager(dir, server.URL)
 			require.NoError(t, err)
 			defer manager.Close()
 			err = manager.Deliver(t.Context(), "intent", "batch", registration, []byte("candidate"))
 			require.Error(t, err)
+			if mode != "byte_count" && mode != "oversized_outbox" {
+				require.ErrorContains(t, err, "invalid saved outbox:")
+			}
 			require.Equal(t, 1, calls, "corrupt outbox must fail before an HTTP request")
 		})
 	}
