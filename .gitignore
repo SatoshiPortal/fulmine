@@ -32,3 +32,6 @@ DS_Store
 .cursor
 
 .worktrees
+
+/test/recovery/artifacts/
+/test/recovery/__pycache__/

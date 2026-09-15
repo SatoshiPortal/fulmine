@@ -11,6 +11,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/nbd-wtf/go-nostr/nip44"
 	"github.com/stretchr/testify/require"
 )
 
@@ -151,10 +152,49 @@ func TestBranchAdversarialMatrix(t *testing.T) {
 	}
 }
 
-func FuzzRecoveryRecord(f *testing.F) {
+// The fixed test keys, nonce and timestamp keep corpus entries identical across
+// fuzz workers. These keys are public fixtures and must never hold funds.
+func fuzzValidRecord(f *testing.F) (Record, *btcec.PrivateKey) {
 	keyBytes := make([]byte, 32)
 	keyBytes[31] = 1
 	owner, _ := btcec.PrivKeyFromBytes(keyBytes)
+	keyBytes[31] = 2
+	publisher, _ := btcec.PrivKeyFromBytes(keyBytes)
+	grant := Grant{Owner: Public(owner), Publisher: Public(publisher), Origin: "https://backup.example",
+		ID: Hash([]byte("fuzz grant")), Scope: Hash([]byte("fuzz intent")), ValidFrom: 1,
+		ExpiresAt: 3600, MaxRecords: 16, MaxBytes: 2 * 1024 * 1024}
+	var err error
+	grant.Signature, err = Sign(owner, grant.Digest())
+	require.NoError(f, err)
+	keyBytes[31] = 3
+	sender, _ := btcec.PrivKeyFromBytes(keyBytes)
+	conversation, err := nip44.GenerateConversationKey(grant.Owner, hex.EncodeToString(sender.Serialize()))
+	require.NoError(f, err)
+	content, err := nip44.Encrypt("authenticated recovery candidate", conversation, nip44.WithCustomNonce(bytes.Repeat([]byte{1}, 32)))
+	require.NoError(f, err)
+	event := Event{PubKey: Public(sender), CreatedAt: 1, Kind: 30078,
+		Tags: [][]string{{"p", grant.Owner}, {"d", grant.ID}}, Content: content}
+	digest, err := event.digest()
+	require.NoError(f, err)
+	event.ID = hex.EncodeToString(digest)
+	event.Sig, err = Sign(sender, digest)
+	require.NoError(f, err)
+	sig, err := Sign(publisher, attestation(grant, event.ID))
+	require.NoError(f, err)
+	envelope, err := json.Marshal(Envelope{Event: event, PublisherSignature: sig})
+	require.NoError(f, err)
+	valid := Record{Grant: grant, Hash: Hash(envelope), Ciphertext: base64.StdEncoding.EncodeToString(envelope)}
+	plain, err := Open(valid, owner)
+	require.NoError(f, err)
+	require.Equal(f, "authenticated recovery candidate", string(plain))
+	return valid, owner
+}
+
+func FuzzRecoveryRecord(f *testing.F) {
+	valid, owner := fuzzValidRecord(f)
+	raw, err := json.Marshal(valid)
+	require.NoError(f, err)
+	f.Add(raw)
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`{"ciphertext":"%%%"}`))
 	f.Add([]byte(`{"grant":{"owner":"00"}}`))
@@ -166,5 +206,22 @@ func FuzzRecoveryRecord(f *testing.F) {
 		if json.Unmarshal(raw, &r) == nil {
 			_, _ = Open(r, owner)
 		}
+	})
+}
+
+func FuzzRecoveryEnvelope(f *testing.F) {
+	valid, owner := fuzzValidRecord(f)
+	raw, err := base64.StdEncoding.DecodeString(valid.Ciphertext)
+	require.NoError(f, err)
+	f.Add(raw)
+	f.Add([]byte(`{}`))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 128*1024 {
+			return
+		}
+		record := valid
+		record.Ciphertext = base64.StdEncoding.EncodeToString(raw)
+		record.Hash = Hash(raw)
+		_, _ = Open(record, owner)
 	})
 }
