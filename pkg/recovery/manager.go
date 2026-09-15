@@ -3,6 +3,7 @@ package recovery
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -46,15 +47,22 @@ type Manager struct {
 	public      string
 }
 
-func NewManager(dir, origin string) (*Manager, error) {
+func validateOrigin(origin string) error {
 	u, err := url.Parse(origin)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Host == "" || !(u.Scheme == "https" || u.Scheme == "http" && u.Hostname() == "127.0.0.1") {
-		return nil, errors.New("recovery origin must be HTTPS (or loopback HTTP for prototype)")
+		return errors.New("recovery origin must be HTTPS (or loopback HTTP for prototype)")
 	}
-	if err = os.MkdirAll(dir, 0700); err != nil {
+	return nil
+}
+
+func NewManager(dir, origin string) (*Manager, error) {
+	if err := validateOrigin(origin); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
 	lockFile, err := os.OpenFile(filepath.Join(dir, "publisher.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -202,7 +210,7 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 	defer m.release()
 	path := filepath.Join(m.dir, "outbox-"+hex.EncodeToString(Digest(intentID, batchID))+".json")
 	var box outbox
-	raw, err := os.ReadFile(path)
+	raw, err := readOutbox(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if err = r.Grant.Validate(m.origin, m.Public(), uint64(time.Now().Unix())); err != nil {
 			return Receipt{}, err
@@ -223,6 +231,17 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 	if !bytes.Equal(box.Request.Grant.Digest(), r.Grant.Digest()) || box.PlaintextHash != Hash(plain) {
 		return Receipt{}, errors.New("batch recovery data changed after sealing")
 	}
+	if box.Request.Grant.Origin != m.origin || box.Request.Grant.Publisher != m.Public() {
+		return Receipt{}, errors.New("saved outbox publisher or origin mismatch")
+	}
+	record := Record{Grant: box.Request.Grant, Ciphertext: box.Request.Ciphertext, Hash: box.Request.Hash}
+	if _, err := authenticateRecord(record); err != nil {
+		return Receipt{}, fmt.Errorf("invalid saved outbox: %w", err)
+	}
+	sealed, _ := base64.StdEncoding.DecodeString(box.Request.Ciphertext) // authenticated above
+	if box.Request.Bytes != uint64(len(sealed)) {
+		return Receipt{}, errors.New("saved outbox byte count mismatch")
+	}
 	// Reconfirm storage even after a previous ack. This avoids treating a local
 	// receipt as evidence the remote database is still available after rollback.
 	box.Request.Timestamp = uint64(time.Now().Unix())
@@ -242,6 +261,22 @@ func (m *Manager) DeliverReceipt(ctx context.Context, intentID, batchID string, 
 	}
 	return receipt, nil
 }
+func readOutbox(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, 256*1024+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 256*1024 {
+		return nil, errors.New("saved outbox too large")
+	}
+	return raw, nil
+}
+
 func saveBox(path string, box outbox) error {
 	raw, err := json.Marshal(box)
 	if err != nil {
@@ -279,6 +314,9 @@ func Post(ctx context.Context, c *http.Client, endpoint string, value, result an
 
 // FetchPage requires the user's private key; the publisher has no read grant.
 func FetchPage(ctx context.Context, origin string, owner *btcec.PrivateKey, after, snapshot uint64) (Page, error) {
+	if err := validateOrigin(origin); err != nil {
+		return Page{}, err
+	}
 	request := FetchRequest{Owner: Public(owner), After: after, Snapshot: snapshot, Timestamp: uint64(time.Now().Unix())}
 	var err error
 	request.Signature, err = Sign(owner, request.Digest())

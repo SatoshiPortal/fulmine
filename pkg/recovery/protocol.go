@@ -66,6 +66,27 @@ type Page struct {
 	NextAfter *uint64  `json:"next_after"`
 }
 
+// UnmarshalJSON requires all pagination fields: missing metadata is not an empty snapshot.
+func (p *Page) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Records   *[]Record       `json:"records"`
+		Snapshot  *uint64         `json:"snapshot"`
+		NextAfter json.RawMessage `json:"next_after"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	if wire.Records == nil || wire.Snapshot == nil || len(wire.NextAfter) == 0 {
+		return errors.New("incomplete recovery page")
+	}
+	var next *uint64
+	if err := json.Unmarshal(wire.NextAfter, &next); err != nil {
+		return err
+	}
+	*p = Page{Records: *wire.Records, Snapshot: *wire.Snapshot, NextAfter: next}
+	return nil
+}
+
 func Hash(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
 func Digest(parts ...string) []byte {
 	h := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
@@ -198,46 +219,56 @@ func Seal(g Grant, publisher *btcec.PrivateKey, plain []byte) (StoreRequest, err
 	return StoreRequest{Grant: g, Ciphertext: base64.StdEncoding.EncodeToString(raw), Hash: Hash(raw), Bytes: uint64(len(raw))}, nil
 }
 
+// authenticateRecord verifies the public envelope without requiring the recipient's key.
+// The publisher uses the same checks before retrying an outbox recovered from disk.
+func authenticateRecord(record Record) (Event, error) {
+	if err := record.Grant.Validate(record.Grant.Origin, record.Grant.Publisher, record.Grant.ValidFrom); err != nil {
+		return Event{}, err
+	}
+	if len(record.Ciphertext) > 192*1024 {
+		return Event{}, errors.New("record too large")
+	}
+	raw, err := base64.StdEncoding.DecodeString(record.Ciphertext)
+	if err != nil {
+		return Event{}, err
+	}
+	if len(raw) > 128*1024 || base64.StdEncoding.EncodeToString(raw) != record.Ciphertext || Hash(raw) != record.Hash {
+		return Event{}, errors.New("ciphertext hash mismatch")
+	}
+	var envelope Envelope
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&envelope); err != nil {
+		return Event{}, err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return Event{}, errors.New("trailing envelope data")
+	}
+	event := envelope.Event
+	digest, err := event.digest()
+	if err != nil {
+		return Event{}, err
+	}
+	if event.ID != hex.EncodeToString(digest) || event.Kind != 30078 || len(event.Tags) != 2 || len(event.Tags[0]) != 2 || len(event.Tags[1]) != 2 || event.Tags[0][0] != "p" || event.Tags[0][1] != record.Grant.Owner || event.Tags[1][0] != "d" || event.Tags[1][1] != record.Grant.ID {
+		return Event{}, errors.New("invalid event binding")
+	}
+	if err = Verify(event.PubKey, digest, event.Sig); err != nil {
+		return Event{}, err
+	}
+	if err = Verify(record.Grant.Publisher, attestation(record.Grant, event.ID), envelope.PublisherSignature); err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
 // Open authenticates the user grant, publisher and ephemeral event before decrypting.
 // Historical grants remain valid evidence after their append window expires.
 func Open(record Record, owner *btcec.PrivateKey) ([]byte, error) {
 	if record.Grant.Owner != Public(owner) {
 		return nil, errors.New("recipient mismatch")
 	}
-	if err := record.Grant.Validate(record.Grant.Origin, record.Grant.Publisher, record.Grant.ValidFrom); err != nil {
-		return nil, err
-	}
-	if len(record.Ciphertext) > 192*1024 {
-		return nil, errors.New("record too large")
-	}
-	raw, err := base64.StdEncoding.DecodeString(record.Ciphertext)
+	event, err := authenticateRecord(record)
 	if err != nil {
-		return nil, err
-	}
-	if len(raw) > 128*1024 || base64.StdEncoding.EncodeToString(raw) != record.Ciphertext || Hash(raw) != record.Hash {
-		return nil, errors.New("ciphertext hash mismatch")
-	}
-	var envelope Envelope
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&envelope); err != nil {
-		return nil, err
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return nil, errors.New("trailing envelope data")
-	}
-	event := envelope.Event
-	digest, err := event.digest()
-	if err != nil {
-		return nil, err
-	}
-	if event.ID != hex.EncodeToString(digest) || event.Kind != 30078 || len(event.Tags) != 2 || len(event.Tags[0]) != 2 || len(event.Tags[1]) != 2 || event.Tags[0][0] != "p" || event.Tags[0][1] != record.Grant.Owner || event.Tags[1][0] != "d" || event.Tags[1][1] != record.Grant.ID {
-		return nil, errors.New("invalid event binding")
-	}
-	if err = Verify(event.PubKey, digest, event.Sig); err != nil {
-		return nil, err
-	}
-	if err = Verify(record.Grant.Publisher, attestation(record.Grant, event.ID), envelope.PublisherSignature); err != nil {
 		return nil, err
 	}
 	conversation, err := nip44.GenerateConversationKey(event.PubKey, hex.EncodeToString(owner.Serialize()))

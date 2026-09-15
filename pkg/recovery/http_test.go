@@ -46,6 +46,19 @@ func TestBackupResponseBoundaries(t *testing.T) {
 	}
 }
 
+func TestFetchOriginPolicy(t *testing.T) {
+	for _, origin := range []string{"http://example.invalid", "https://user:pass@example.invalid", "https://example.invalid/path", "https://example.invalid?query", "https://example.invalid#fragment", "file:///tmp/backup", ""} {
+		t.Run(origin, func(t *testing.T) {
+			// A nil key proves validation runs before signing or issuing a request.
+			_, err := FetchPage(t.Context(), origin, nil, 0, 0)
+			require.ErrorContains(t, err, "recovery origin must be")
+		})
+	}
+	for _, origin := range []string{"https://backup.example", "http://127.0.0.1:9081"} {
+		require.NoError(t, validateOrigin(origin))
+	}
+}
+
 func TestBackupRedirectDoesNotForwardAuthorization(t *testing.T) {
 	var targetCalls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

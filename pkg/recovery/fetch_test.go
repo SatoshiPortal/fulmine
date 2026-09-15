@@ -65,7 +65,7 @@ func TestFetchResumeAndLocalIntegrity(t *testing.T) {
 	require.Equal(t, before, requests)
 }
 func TestFetchRejectsMalformedPages(t *testing.T) {
-	for _, mode := range []string{"duplicate", "zero_id", "past_snapshot", "non_progress", "cursor_not_last", "wrong_origin", "tampered_record", "snapshot_rollback"} {
+	for _, mode := range []string{"duplicate", "zero_id", "past_snapshot", "non_progress", "cursor_not_last", "wrong_origin", "tampered_record", "snapshot_rollback", "truncated_last_page", "empty_last_page"} {
 		t.Run(mode, func(t *testing.T) {
 			owner, publisher := testKey(t), testKey(t)
 			var page Page
@@ -96,12 +96,31 @@ func TestFetchRejectsMalformedPages(t *testing.T) {
 				page.Records[0].Hash = strings.Repeat("0", 64)
 			case "snapshot_rollback":
 				page.Snapshot = 0
+			case "empty_last_page":
+				page.Records = []Record{}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			_, err = FetchToDirectory(ctx, server.URL, owner, t.TempDir())
 			require.Error(t, err)
 			require.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestFetchRequiresCompletePageSchema(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"records":[],"snapshot":0}`, `{"records":[],"next_after":null}`, `{"snapshot":0,"next_after":null}`, `{"records":null,"snapshot":0,"next_after":null}`} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer server.Close()
+			dir := t.TempDir()
+			_, err := FetchToDirectory(t.Context(), server.URL, testKey(t), dir)
+			require.Error(t, err)
+			raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+			require.NoError(t, err)
+			var manifest fetchManifest
+			require.NoError(t, json.Unmarshal(raw, &manifest))
+			require.False(t, manifest.Complete)
 		})
 	}
 }

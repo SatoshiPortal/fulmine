@@ -25,6 +25,9 @@ type fetchManifest struct {
 // contains explicitly incomplete results; successfully written bundles survive.
 // A completed directory can be refreshed to a new snapshot on the next call.
 func FetchToDirectory(ctx context.Context, origin string, owner *btcec.PrivateKey, dir string) (int, error) {
+	if err := validateOrigin(origin); err != nil {
+		return 0, err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return 0, err
 	}
@@ -125,6 +128,9 @@ func FetchToDirectory(ctx context.Context, origin string, owner *btcec.PrivateKe
 		}
 		m.Snapshot = page.Snapshot
 		if page.NextAfter == nil {
+			if last != page.Snapshot {
+				return len(m.Files), fmt.Errorf("incomplete final recovery page")
+			}
 			m.Complete = true
 		} else {
 			if last <= m.After || *page.NextAfter != last || last >= page.Snapshot {

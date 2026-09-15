@@ -25,6 +25,14 @@ signing registrations, and fetching/decrypting records with an existing Nostr ke
 Fetching resumes through a manifest and verifies previously downloaded files.
 The helper does not implement a mobile wallet importer or broadcast exits.
 
+Retries authenticate the saved outbox's grant, ciphertext, ephemeral event and
+publisher attestation before making an upload request. Invalid or oversized
+saved data fails the gate even if a server would return a matching receipt.
+Recovery fetches require every pagination field and must reach the advertised
+snapshot before marking a download complete; truncated final pages are errors.
+Fetch uses the same HTTPS-or-loopback origin policy as publisher uploads and
+rejects invalid origins before signing an owner request.
+
 ## Limits and validation
 
 The prototype accepts one ordinary BTC replacement output and at most 16 live
