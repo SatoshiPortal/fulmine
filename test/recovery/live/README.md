@@ -223,3 +223,31 @@ has the `bull.recovery.run=<run-id>` label. Never use a blanket Docker prune.
 | Real backup outage before Fulmine forfeits | Live backup-process kill, failed task without forfeits, original unspent across a 20-second observation |
 | Actual seed-only wallet import with Arkade unreachable | Still requires the live wallet adapter |
 | Expired/swept ancestor, reorg, fee exhaustion, interrupted unroll | Additional Bitcoin/live scenarios required |
+
+## Observed successive-renewal boundary
+
+On 16 September 2026, run `16d5bccb4a604bc18edda586188ef07b` requested ten
+successive offline refreshes using Fulmine fixture revision
+`6f149ed37ba356623b96a48a9ee0688361a14c7d` and backup revision
+`140b236310e62b8bd4bc6ae27b7ff13cc27bb4d8`. It completed one and reported
+**blocked at round two, exit code 2**.
+
+The original intent and owner forfeit signatures verified before the probe.
+Retargeting their input to the observed replacement invalidated both signatures.
+Replaying the old request was rejected because its input was already spent;
+submitting the retargeted request was rejected for an invalid forfeit signature.
+The changed intent also produced a different recovery scope, and rewriting that
+scope invalidated the existing Nostr grant signature. These latter scope checks
+were local cryptographic checks; the server rejected the request earlier at the
+forfeit check. The fixture's replacement contract has no delegate key. Keeping a
+delegation leaf would not make signatures for the old outpoint reusable.
+
+No owner signing or backup decryption occurred in the renewal probe. The user
+wallet process had exited before the first refresh; its remaining state and seed
+file were removed before the second-refresh probe. The controller retained the
+public test seed for the eventual restore. After Ark, its indexers and the
+delegate were stopped, seed-derived backup retrieval and later user fee funding
+produced a confirmed 19,000-sat exit of the first replacement. No second task or
+replacement was created. The test stack was cleaned up and permanent services
+were preserved. This is a regtest observation of the authorization boundary,
+not a successful ten-refresh chain.
