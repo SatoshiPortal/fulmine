@@ -17,6 +17,7 @@ python3 test/recovery/live/run.py components
 python3 test/recovery/live/run.py bitcoin
 python3 test/recovery/live/run.py live --live-binaries /path/to/prebuilt-binaries
 python3 test/recovery/live/run.py live --live-backup-outage --live-binaries /path/to/prebuilt-binaries
+python3 test/recovery/live/run.py live --live-refresh-count 10 --live-binaries /path/to/prebuilt-binaries
 python3 test/recovery/live/run.py acceptance
 python3 test/recovery/live/run.py all
 python3 -m unittest discover -s test/recovery/live -v
@@ -111,6 +112,23 @@ Success requires a retained candidate, a failed task with no commitment and no
 forfeit-submission evidence, plus an independent Arkade indexer query showing
 that the original VTXO remains unspent. This scenario does not claim an exit
 from the unacknowledged candidate.
+
+`--live-refresh-count` accepts 1 through 10 (default 1). Counts above one cannot
+be combined with the outage scenario. The current fixture probes the second
+refresh after the first completes and confirms, with the wallet directory and
+seed file removed and no mnemonic supplied to the probe. It tests the actual
+replacement contract, owner signatures, grant scope, and delegate rejection of
+both the original request and a request retargeted to the replacement. It never
+repeats the first refresh fixture and counts those repetitions as renewals.
+
+When renewal is unsupported, `offline-renewal-evidence.json` records the requested
+count, one completed refresh, the round-two reason, and observed rejections.
+The harness still stops Arkade and the delegate before restoring the seed and
+exiting the last completed replacement. Its report remains **blocked, exit code
+2**, even when that exit succeeds; it does not claim ten offline refreshes.
+The tested boundary requires new owner-signed intent/forfeit material and a
+new authorized recovery scope. Retaining a delegate leaf alone would not make
+the existing input-bound signatures reusable.
 
 ## Verified isolated release
 

@@ -21,6 +21,15 @@ from paths import BACKUP, FULMINE, HARNESS
 
 BINARIES = ("fulmine", "recovery-client", "recovery-tests", "backup-server")
 NGINX_IMAGE = "nginx@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236"
+OFFLINE_RENEWAL_CHECKS = frozenset((
+    "wallet_state_absent", "seed_file_absent", "config_seed_absent",
+    "original_intent_signature_valid", "retargeted_intent_signature_rejected",
+    "original_forfeit_signature_valid", "retargeted_forfeit_signature_rejected",
+    "retargeted_scope_differs", "rewritten_grant_signature_rejected",
+    "replacement_has_no_delegate_key", "original_request_rejected",
+    "retargeted_request_rejected", "original_input_spent", "replacement_unspent",
+))
+OFFLINE_RENEWAL_REJECTIONS = frozenset(("original_request", "retargeted_request", "intent", "grant"))
 
 
 def binary_manifest(directory, supplied=None):
@@ -204,7 +213,32 @@ def failed_refresh(data, logfile):
     return True
 
 
-def acceptance(run, binaries=None, backup_outage=False):
+def offline_renewal_evidence(path, requested, refresh):
+    evidence = json.loads(path.read_text())
+    if (evidence.get("status") != "blocked" or
+            type(evidence.get("requested_refresh_count")) is not int or evidence["requested_refresh_count"] != requested or
+            type(evidence.get("completed_refresh_count")) is not int or evidence["completed_refresh_count"] != 1 or
+            type(evidence.get("blocked_round")) is not int or evidence["blocked_round"] != 2):
+        raise RuntimeError("offline renewal probe must distinguish one completed refresh from requested successive refreshes")
+    if evidence.get("commitment_txid") != refresh["commitment_txid"]:
+        raise RuntimeError("offline renewal probe observed a different completed commitment")
+    if not isinstance(evidence.get("replacement_outpoint"), str) or not re.fullmatch(r"[0-9a-f]{64}:[0-9]+", evidence["replacement_outpoint"]):
+        raise RuntimeError("offline renewal probe lacks the completed replacement")
+    if not isinstance(evidence.get("blocked_reason"), str) or not evidence["blocked_reason"].strip():
+        raise RuntimeError("offline renewal probe lacks an observed reason")
+    checks = evidence.get("checks")
+    rejections = evidence.get("rejections")
+    if not isinstance(checks, dict) or set(checks) != OFFLINE_RENEWAL_CHECKS or any(value is not True for value in checks.values()):
+        raise RuntimeError("offline renewal boundary checks did not all pass")
+    if not isinstance(rejections, dict) or set(rejections) != OFFLINE_RENEWAL_REJECTIONS or any(not isinstance(value, str) or not value.strip() for value in rejections.values()):
+        raise RuntimeError("offline renewal probe must observe both real registration rejections")
+    return evidence
+
+
+def acceptance(run, binaries=None, backup_outage=False, refresh_count=1):
+    if type(refresh_count) is not int or not 1 <= refresh_count <= 10 or (backup_outage and refresh_count > 1):
+        raise ValueError("live refresh count must be 1..10 and cannot combine repeated refreshes with backup outage")
+    run.live_refresh_summary = {"requested_refresh_count": refresh_count, "completed_refresh_count": 0}
     # All wallet operations are real Go SDK calls; run separate preparation and
     # restoration processes, retaining only the mnemonic between them.
     if binaries:
@@ -300,7 +334,25 @@ def acceptance(run, binaries=None, backup_outage=False):
             (run.directory/"live-outage-evidence.json").write_text(json.dumps({"backup_process_killed":True,"candidate_retained":True,"task_status":"failed","forfeit_submissions":0,"original_vtxo_unspent":True}))
             return
         refresh = wait_for("completed protected refresh",lambda:completed_refresh(data, run.directory/"live-fulmine.log"),timeout=120)
+        run.live_refresh_summary["completed_refresh_count"] = 1
         stack.mine()
+        renewal = None
+        saved_seed = None
+        if refresh_count > 1:
+            # The controller retains the public fixture's seed solely for later
+            # restoration. No file or config input exposes it to the probe.
+            saved_seed = (run.directory/"seed").read_bytes()
+            (run.directory/"seed").unlink()
+            shutil.rmtree(run.directory/"wallet")
+            config.update(public_test_mnemonic="", requested_refresh_count=refresh_count,
+                          completed_commitment_txid=refresh["commitment_txid"])
+            config_path.write_text(json.dumps(config))
+            fixture("TestLiveOfflineRenewalBoundary", 90, env)
+            renewal = offline_renewal_evidence(run.directory/"offline-renewal-evidence.json", refresh_count, refresh)
+            if completed_refresh(data, run.directory/"live-fulmine.log") != refresh:
+                raise RuntimeError("renewal probe changed the completed task or created another task")
+            run.live_refresh_summary.update(status="blocked", blocked_round=renewal["blocked_round"],
+                                            blocked_reason=renewal["blocked_reason"])
         # Stop both the delegate and every Arkade/indexer process before restore.
         delegate.terminate();delegate.wait(timeout=10)
         stack.compose("stop","arkd","arkd-wallet","nbxplorer","fulcrum","mempool_api",timeout=45)
@@ -310,7 +362,12 @@ def acceptance(run, binaries=None, backup_outage=False):
                 sock.settimeout(2)
                 if sock.connect_ex((parsed.hostname, parsed.port)) == 0:
                     raise RuntimeError("recovery dependency still accepts connections after shutdown")
-        shutil.rmtree(run.directory/"wallet")
+        if saved_seed is None:
+            shutil.rmtree(run.directory/"wallet")
+        else:
+            with open(run.directory/"seed", "wb", opener=lambda p, f: os.open(p, f, 0o600)) as stream:
+                stream.write(saved_seed)
+            saved_seed = None
         fixture("TestLiveRestore", 120, env)
         evidence = json.loads((run.directory/"live-evidence.json").read_text())
         for field in ("commitment_txid", "ciphertext_sha256"):
@@ -319,10 +376,18 @@ def acceptance(run, binaries=None, backup_outage=False):
         prepare = json.loads((run.directory/"prepare-evidence.json").read_text())
         if evidence.get("replacement_outpoint") == prepare["original_outpoint"]:
             raise RuntimeError("restoration exited the original VTXO")
+        if renewal is not None and evidence.get("replacement_outpoint") != renewal["replacement_outpoint"]:
+            raise RuntimeError("restoration differs from the offline renewal probe's last completed coin")
+        if renewal is not None and evidence.get("confirmed") is not True:
+            raise RuntimeError("last completed coin was not confirmed exited after the renewal boundary")
         evidence.update(refresh)
         evidence["ark_and_delegate_endpoints_unreachable"] = True
         evidence["wallet_state_removed"] = not (run.directory/"wallet").exists()
         (run.directory/"live-evidence.json").write_text(json.dumps(evidence, indent=2))
+        run.live_refresh_summary["last_completed_exit_confirmed"] = evidence.get("confirmed") is True
+        if renewal is not None:
+            return (f"completed 1 of {refresh_count} requested offline refreshes; round 2 blocked: "
+                    + renewal["blocked_reason"] + "; last completed replacement exited after Arkade shutdown")
     finally:
         import sys
         primary = sys.exc_info()[1]

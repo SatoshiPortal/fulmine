@@ -1,4 +1,7 @@
 import json
+import contextlib
+import copy
+import io
 import os
 from pathlib import Path
 import sqlite3
@@ -11,6 +14,61 @@ from unittest.mock import Mock, patch
 import coverage
 import live
 import paths
+import run as harness
+
+
+class OfflineRenewalTests(unittest.TestCase):
+    def test_invalid_count_or_outage_combination_starts_nothing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)/"artifacts"
+            for args in (("0",), ("11",), ("not-a-count",), ("10", "--live-backup-outage")):
+                with self.subTest(args=args), patch("live.acceptance") as accept, contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as raised:
+                        harness.main(["live", "--output", str(output), "--live-refresh-count", *args])
+                    self.assertEqual(raised.exception.code, 2)
+                    accept.assert_not_called()
+                    self.assertFalse(output.exists())
+
+    def test_default_one_preserved_and_requested_ten_never_passes_one(self):
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            with patch("live.acceptance", return_value=None) as accept:
+                self.assertEqual(harness.main(["live", "--output", temp]), 0)
+                self.assertEqual(accept.call_args.args[-1], 1)
+            for returned, status in (("completed 1 of 10; round 2 rejected", 2), (None, 1), ({"completed_refresh_count": 10}, 1)):
+                with self.subTest(returned=returned), patch("live.acceptance", return_value=returned) as accept:
+                    self.assertEqual(harness.main(["live", "--output", temp, "--live-refresh-count", "10"]), status)
+                    accept.assert_called_once()
+                    self.assertEqual(accept.call_args.args[-1], 10)
+
+    def test_probe_count_and_candidate_evidence_cannot_be_replayed_as_ten(self):
+        evidence = {"status": "blocked", "requested_refresh_count": 10, "completed_refresh_count": 1,
+                    "blocked_round": 2, "blocked_reason": "replacement lacks delegate authorization",
+                    "commitment_txid": "a"*64, "replacement_outpoint": "b"*64+":0",
+                    "checks": {key: True for key in live.OFFLINE_RENEWAL_CHECKS},
+                    "rejections": {key: "rejected" for key in live.OFFLINE_RENEWAL_REJECTIONS}}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)/"offline-renewal-evidence.json"
+            path.write_text(json.dumps(evidence))
+            self.assertEqual(live.offline_renewal_evidence(path, 10, {"commitment_txid": "a"*64}), evidence)
+            for category in ("checks", "rejections"):
+                for key in evidence[category]:
+                    with self.subTest(missing=key):
+                        changed = copy.deepcopy(evidence)
+                        del changed[category][key]
+                        path.write_text(json.dumps(changed))
+                        with self.assertRaises(RuntimeError):
+                            live.offline_renewal_evidence(path, 10, {"commitment_txid": "a"*64})
+            mutations = [("requested_refresh_count", 1), ("completed_refresh_count", 10),
+                         ("completed_refresh_count", True), ("blocked_round", 11), ("status", "passed"),
+                         ("commitment_txid", "c"*64), ("replacement_outpoint", None), ("blocked_reason", ""),
+                         ("checks", {}), ("checks", {"wallet_offline": False}), ("rejections", {})]
+            for key, value in mutations:
+                with self.subTest(key=key, value=value):
+                    changed = copy.deepcopy(evidence)
+                    changed[key] = value
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaises(RuntimeError):
+                        live.offline_renewal_evidence(path, 10, {"commitment_txid": "a"*64})
 
 
 class LiveEvidenceTests(unittest.TestCase):

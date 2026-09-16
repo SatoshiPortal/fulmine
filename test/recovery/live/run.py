@@ -203,6 +203,8 @@ class Run:
                   "results": [dataclasses.asdict(r) for r in self.results]}
         if hasattr(self, "build_manifest"):
             report["build"] = self.build_manifest
+        if hasattr(self, "live_refresh_summary"):
+            report["live_refresh"] = self.live_refresh_summary
         import coverage
         edge_cases = coverage.report(self.directory)
         (self.directory / "edge-cases.json").write_text(json.dumps(edge_cases, indent=2) + "\n")
@@ -357,6 +359,15 @@ def acceptance(run, driver_config):
         call("cleanup")
 
 
+def live_case(run, binaries, backup_outage, refresh_count):
+    import live
+    blocked_reason = live.acceptance(run, binaries, backup_outage, refresh_count)
+    if refresh_count > 1:
+        checked(isinstance(blocked_reason, str) and bool(blocked_reason.strip()),
+                "offline renewal probe must report its observed boundary; one refresh cannot satisfy multiple refreshes")
+        raise Blocked(blocked_reason)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", choices=("components", "bitcoin", "live", "fuzz", "acceptance", "all", "list"))
@@ -366,7 +377,10 @@ def main(argv=None):
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--live-binaries", type=Path, help="prebuilt live fixture binaries for an isolated VM runner")
     parser.add_argument("--live-backup-outage", action="store_true", help="kill the live backup before refresh and require the original VTXO to remain unspent")
+    parser.add_argument("--live-refresh-count", type=int, default=1, choices=range(1, 11), help="requested consecutive refreshes with the wallet offline (1..10); unsupported renewal reports blocked after testing exit of the last completed coin")
     args = parser.parse_args(argv)
+    if args.live_refresh_count > 1 and (args.live_backup_outage or args.suite != "live"):
+        parser.error("--live-refresh-count greater than one requires the live suite without --live-backup-outage")
     if args.suite == "list":
         print("components: real Go/Rust protocol, durability and authentication tests\nbitcoin: isolated Core node, encrypted branch retrieval, later funding, CSV sweep\nlive: real delegated refresh and independent exit; --live-backup-outage checks the backup gate\nfuzz: bounded recovery-record fuzzing\nacceptance: complete wallet restoration flow (requires wallet adapter)\nall: components, bitcoin, acceptance; missing adapter returns exit code 2")
         return 0
@@ -379,9 +393,10 @@ def main(argv=None):
         if args.suite == "fuzz":
             run.case("recovery_record_fuzz", "fuzz", lambda: run.command("record-fuzz", ["go", "test", "-run=^$", "-fuzz=^FuzzRecoveryRecord$", "-fuzztime=15s", "-parallel=2", "./pkg/recovery"], FULMINE, timeout=60))
         if args.suite == "live":
-            import live
             name = "live_backup_outage_preserves_original" if args.live_backup_outage else "live_delegated_refresh_to_exit"
-            run.case(name, "live_delegate", lambda: live.acceptance(run, args.live_binaries, args.live_backup_outage))
+            if args.live_refresh_count > 1:
+                name = "live_offline_successive_refreshes_to_exit"
+            run.case(name, "live_delegate", lambda: live_case(run, args.live_binaries, args.live_backup_outage, args.live_refresh_count))
         if args.suite in ("acceptance", "all"):
             run.case("delegated_refresh_to_exit", "full_acceptance", lambda: acceptance(run, args.driver))
     except KeyboardInterrupt:

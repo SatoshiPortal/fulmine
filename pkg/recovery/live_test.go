@@ -48,6 +48,8 @@ type liveConfig struct {
 	Ark, Admin, Explorer, Delegate, Backup, Workdir, Bitcoin string
 	MiningAddress                                            string `json:"mining_address"`
 	PublicTestMnemonic                                       string `json:"public_test_mnemonic"`
+	RequestedRefreshCount                                    int    `json:"requested_refresh_count"`
+	CompletedCommitmentTxID                                  string `json:"completed_commitment_txid"`
 }
 
 func liveConfigFor(t *testing.T) liveConfig {
